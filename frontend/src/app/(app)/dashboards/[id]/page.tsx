@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v59-frame-on-load
-console.log(`[dashboard] REVISION: dashboard-v59-frame-on-load loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v60-agent-block
+console.log(`[dashboard] REVISION: dashboard-v60-agent-block loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ import {
   CheckSquare,
   Globe,
   FlaskConical,
+  Bot,
   SquareTerminal,
   Users,
   Settings,
@@ -191,6 +192,8 @@ const blockTools: BlockTool[] = [
   { id: "schedule", type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { id: "browser", type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   { id: "benchmark", type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
+  // An outside AI agent (Grok Bot, Muse, Dots, ...) linked with a pairing code.
+  { id: "agent", type: "agent", icon: <Bot className="w-4 h-4" />, label: "Agent" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { id: "recipe", type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -294,6 +297,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
   benchmark: { width: 340, height: 470 },
+  agent: { width: 360, height: 480 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },
@@ -2771,6 +2775,7 @@ export default function DashboardPage() {
       tool.type === "todo" ? "[]"
       : tool.type === "benchmark"
         ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: [], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
+      : tool.type === "agent" ? JSON.stringify({ kind: "grok" })
         : "";
     // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
     // The PTY starts in the workspace root (~), so use a relative cd.

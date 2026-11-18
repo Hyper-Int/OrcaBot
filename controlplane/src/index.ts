@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v27-error-codes
-console.log(`[controlplane] REVISION: controlplane-v27-error-codes loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v28-agent-blocks
+console.log(`[controlplane] REVISION: controlplane-v28-agent-blocks loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -42,6 +42,7 @@ import * as bugReports from './bug-reports/handler';
 import * as agentState from './agent-state/handler';
 import * as chat from './chat/handler';
 import * as egress from './egress/handler';
+import * as agents from './agents/handler';
 import * as analytics from './analytics/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
@@ -1618,7 +1619,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
       'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord',
       'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
-      'outlook_calendar', 'benchmark',
+      'outlook_calendar', 'benchmark', 'agent',
     ]);
     if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
       return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });
@@ -2615,6 +2616,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, ctx);
   }
 
+  // REVISION: agent-link-v1-hub-owner
+  // Agent blocks: outside AI agents linked with a pairing code (src/agents/handler.ts).
+  // GET /agents, POST /agents/link {code}, DELETE /agents?identity=
+  if (segments[0] === 'agents' && segments.length === 1 && (method === 'GET' || method === 'DELETE')) {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return method === 'GET' ? agents.handleListAgents(env, auth) : agents.handleUnlinkAgent(request, env, auth);
+  }
+  if (segments[0] === 'agents' && segments.length === 2 && segments[1] === 'link' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agents.handleLinkAgent(request, env, auth);
+  }
+  // GET/POST /dashboards/:id/agents/chat - chat with a linked agent through the dashboard VM (owner only)
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'agents' && segments[3] === 'chat'
+      && (method === 'GET' || method === 'POST')) {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agents.handleAgentChat(request, env, auth, segments[1],
+      () => resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion));
+  }
+
   // POST /dashboards/:id/browser/start - Start dashboard browser
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'start' && method === 'POST') {
     const authError = requireAuth(auth);
@@ -3381,6 +3404,24 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = await authorizeSandboxForDashboard(request, env, await dashboardIdForSandboxSession(env, segments[2]));
     if (authError) return authError;
     return sessions.getApprovedDomainsInternal(env, segments[2]);
+  }
+
+  // REVISION: agent-link-v1-hub-owner
+  // Agent blocks, called by the dashboard's VM (dashboard-scoped token):
+  // GET  /internal/dashboards/:id/agent-link/config          - hub URL and this dashboard's device name
+  // POST /internal/dashboards/:id/agent-link/approve-device  - link the VM's client as the owner's device
+  // GET  /internal/dashboards/:id/terminals/:ptyId/agents    - agents a terminal is connected to by edges
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'agent-link') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    if (segments[4] === 'config' && method === 'GET') return agents.handleInternalAgentLinkConfig(env, segments[2]);
+    if (segments[4] === 'approve-device' && method === 'POST') return agents.handleInternalApproveDevice(request, env, segments[2]);
+  }
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 6 && segments[3] === 'terminals'
+      && segments[5] === 'agents' && method === 'GET') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    return agents.handleInternalTerminalAgents(env, segments[2], segments[4]);
   }
 
   // GET /internal/dashboards/:id/egress/allowlist - Sandbox loads persisted egress allowlist on startup

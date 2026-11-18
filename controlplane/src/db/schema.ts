@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS dashboard_items (
 CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id);
 
 -- Dashboard edges (connections between blocks)
+-- Agent blocks: each user's owner identity on the agent hub (outside AI agents link
+-- to it with pairing codes). The token is encrypted (encryptSecret) and never goes to a
+-- VM; kept out of user_secrets on purpose, since those are pushed into the VM env.
+CREATE TABLE IF NOT EXISTS agent_hub_owners (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  identity TEXT NOT NULL,
+  token_enc TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS dashboard_edges (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
@@ -1177,7 +1187,7 @@ CREATE INDEX IF NOT EXISTS idx_tts_ballots_voter ON tts_ballots(voter_hash, crea
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v16-dashboard-cloud-id";
+const SCHEMA_REVISION = "schema-v17-agent-hub-owners";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);

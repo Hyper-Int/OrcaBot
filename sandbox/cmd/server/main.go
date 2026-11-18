@@ -480,6 +480,11 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.poolModeGuard(s.requireLocalPTYAuth(s.handleToolsChanged)))
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.poolModeGuard(s.requireLocalPTYAuth(s.handleScrollback)))
 
+	// Agent blocks: agents this terminal is connected to by edges — blocked in pool mode
+	// (the Unix socket's /agents/ serves pool PTYs). REVISION: agent-link-v1-device-client
+	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/agents", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAgentsLocal)))
+	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/agents/{action}", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAgentsLocal)))
+
 	// Anthropic key — pool-guarded: in pool mode, hooks.go writes the Unix socket URL
 	// (/anthropic-key on /run/orcabot/privileged.sock) into settings.local.json, so no
 	// pool PTY process ever holds the TCP URL or X-Api-Key-Token. poolModeGuard returns
@@ -655,6 +660,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.requireMachine(s.auth.RequireAuthFunc(s.handleResumeAgent)))
 	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleStоpAgent)))
 	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.requireMachine(s.auth.RequireAuthFunc(s.wsRouter.HandleAgentWebSocket)))
+
+	// Agent blocks: the dashboard owner's chat with a linked outside agent (cmd/server/agentlink.go).
+	// REVISION: agent-link-v1-device-client
+	mux.HandleFunc("GET /sessions/{sessionId}/agent-link/chat", s.requireMachine(s.auth.RequireAuthFunc(s.handleAgentLinkChat)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent-link/chat", s.requireMachine(s.auth.RequireAuthFunc(s.handleAgentLinkChat)))
 
 	// Filesystem
 	mux.HandleFunc("GET /sessions/{sessionId}/files", s.requireMachine(s.auth.RequireAuthFunc(s.handleListFiles)))

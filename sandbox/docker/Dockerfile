@@ -239,6 +239,27 @@ RUN groupadd --system --gid 1991 orcabot-vnc \
                --home-dir /home/orcabot-vnc --shell /usr/sbin/nologin orcabot-vnc \
     && chmod 700 /home/orcabot-vnc
 
+# REVISION: agent-link-v1-device-client
+# Agent blocks: the per-dashboard client that talks to outside AI agents (Grok Bot,
+# Muse, Dots, ...) as the dashboard owner's linked device (internal/agentlink). It
+# holds that device's keys, so it runs as its own user, outside the pool range and
+# the sandbox group, with its state in a root-owned parent, never in /workspace.
+# The client is the agent hub's `siren-stdio` (MLS over JSON lines). Pass
+# AGENT_LINK_URL (+ AGENT_LINK_SHA256) to bake it in; without it, Agent blocks say
+# the link isn't available and nothing else changes.
+ARG AGENT_LINK_URL=
+ARG AGENT_LINK_SHA256=
+RUN groupadd --system --gid 1992 orcabot-agentlink \
+    && useradd --system --uid 1992 --gid 1992 --no-create-home \
+               --home-dir /var/lib/orcabot/agent-link --shell /usr/sbin/nologin orcabot-agentlink \
+    && mkdir -p /var/lib/orcabot/agent-link && chmod 755 /var/lib/orcabot \
+    && chown root:root /var/lib/orcabot/agent-link && chmod 711 /var/lib/orcabot/agent-link \
+    && if [ -n "$AGENT_LINK_URL" ]; then \
+         curl -fsSL "$AGENT_LINK_URL" -o /usr/local/bin/orcabot-agent-link \
+         && { [ -z "$AGENT_LINK_SHA256" ] || echo "$AGENT_LINK_SHA256  /usr/local/bin/orcabot-agent-link" | sha256sum -c -; } \
+         && chmod 755 /usr/local/bin/orcabot-agent-link; \
+       fi
+
 # Set umask 0002 for all PTY shell sessions.
 # Without this, files created by pty-000 land at 0644/0755 (umask 0022) so
 # pty-001 can read them but not modify them — breaking the shared-workspace model.
