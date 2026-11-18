@@ -2,41 +2,38 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v1-linked
-# A PokerBench seat terminal. The engine publishes this script as $PUB/seat.sh, and a
-# seat terminal's boot command just runs it:
+# REVISION: pokerbench-seat-v2-interactive-agents
+# A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
+# seat by being linked to the engine terminal on the canvas; its seat is named after the
+# terminal. Two kinds of seat terminal use it:
 #
-#   PLAYER=claude-code   # what this seat plays until the table page says otherwise
-#   MODEL=               # blank: the player's default model
-#   exec bash /tmp/pokerbench/seat.sh
+# An agent terminal (Claude Code, Codex, Gemini CLI) runs its agent interactively, like
+# any Orcabot agent terminal: you log in there as usual. Its boot command starts this
+# script quietly in the background, then the agent:
 #
-# A terminal takes a seat by being linked to the engine terminal on the canvas; its
-# seat is named after the terminal. What it plays (Claude Code, Codex, Gemini CLI, a
-# model through its API, the house bot) and with which model is chosen on the table
-# page, until Start; this terminal follows. If the player can't play here yet (not
-# signed in, no key), it says what's missing, here and on the table page.
+#   MODEL=                  # blank: the default model
+#   export MODEL
+#   ( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done
+#     exec bash /tmp/pokerbench/seat.sh helper anthropic ) >/dev/null 2>&1 &
+#   exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions
 #
-# Defaults from the boot command: PLAYER (claude-code | codex | gemini-cli | api | house),
-# MODEL, PROVIDER and EFFORT (api), STRATEGY (house). SEAT: a seat name from the
-# engine's SEATS, for a terminal the engine can't see links for (an older sandbox).
+#   The helper (vendor: anthropic | openai | google) checks the seat in once the agent is
+#   signed in and at its prompt (until then the table page says what's missing), and at
+#   Start types the poker prompt into this terminal (Orcabot's self-input). The agent
+#   plays through the `poker` command, which finds its seat from the link. Its name is
+#   given by vendor so the boot command names the agent only where it starts it: Orcabot
+#   recognises the agent (and the Codex model picker edits) from that word.
+#
+# A bot terminal (a model through its API, or the house bot) runs this script in the
+# foreground: `exec bash /tmp/pokerbench/seat.sh`, with PLAYER (api | house), MODEL,
+# PROVIDER and EFFORT (api), STRATEGY (house) as defaults that the table page can change
+# until Start. SEAT: a seat name from the engine's SEATS, for a terminal the engine can't
+# see links for (an older sandbox).
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v1-linked
-echo "[seat] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
-# Ctrl-C: a shell, to sign in. Restart the terminal afterwards to take the seat again.
-trap 'echo; echo "A shell: sign in here, then restart this terminal to take the seat again."; exec bash -i' INT
-
-said=
-say_once() { [ "$1" = "$said" ] || { echo "$1"; said=$1; }; }
-
-# This terminal's defaults, as JSON for the engine.
-DEFAULT=$(python3 -c 'import json,os
-e=os.environ.get
-p={"kind":e("PLAYER") or "claude-code"}
-for k in ("model","provider","effort","strategy"):
-    v=e(k.upper())
-    if v: p[k]=v
-print(json.dumps(p))')
+REVISION=pokerbench-seat-v2-interactive-agents
+SOCK=/run/orcabot/privileged.sock
+MODE="${1:-play}"
 
 engine_up() {
   [ -r "$PUB/engine.env" ] && . "$PUB/engine.env" && curl -sf -o /dev/null --max-time 3 "$POKER_URL/api/health"
@@ -84,24 +81,14 @@ check() {
   NEED= HOWTO= KEY=
   case "$P_KIND" in
     claude-code)
-      [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ -s "$HOME/.claude/.credentials.json" ] \
+      [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.claude/.credentials.json" ] \
         || { NEED="Claude Code isn't signed in"; HOWTO="type claude, run /login, then /exit"; KEY=ANTHROPIC_API_KEY; } ;;
     codex)
-      [ -n "${OPENAI_API_KEY:-}" ] || [ -s "${CODEX_HOME:-$HOME/.codex}/auth.json" ] \
+      [ -n "${OPENAI_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "${CODEX_HOME:-$HOME/.codex}/auth.json" ] \
         || { NEED="Codex isn't signed in"; HOWTO="type codex login --device-auth"; KEY=OPENAI_API_KEY; } ;;
     gemini-cli)
-      if [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}" ] || [ -s "$HOME/.gemini/oauth_creds.json" ]; then
-        # With a key, pick it: otherwise Gemini stops at "how would you like to sign in?".
-        [ -n "${GEMINI_API_KEY:-}" ] && python3 -c 'import json,os
-p=os.path.expanduser("~/.gemini/settings.json")
-try: s=json.load(open(p))
-except Exception: s={}
-a=s.setdefault("security",{}).setdefault("auth",{})
-if not a.get("selectedType"):
-    a["selectedType"]="gemini-api-key"; os.makedirs(os.path.dirname(p),exist_ok=True); json.dump(s,open(p,"w"),indent=2)'
-      else
-        NEED="Gemini CLI isn't signed in"; HOWTO="type gemini and choose Sign in with Google, then /quit"; KEY=GEMINI_API_KEY
-      fi ;;
+      [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.gemini/oauth_creds.json" ] \
+        || { NEED="Gemini CLI isn't signed in"; HOWTO="type gemini and choose Sign in with Google, then /quit"; KEY=GEMINI_API_KEY; } ;;
     api)
       case "$P_PROVIDER" in anthropic) KEY=ANTHROPIC_API_KEY;; openai) KEY=OPENAI_API_KEY;; *) KEY=GEMINI_API_KEY;; esac
       [ -n "${!KEY:-}" ] || NEED="$P_LABEL needs an API key" ;;
@@ -120,6 +107,108 @@ info() {  # how the seat introduces itself (table page, report)
     house) echo "house/bot ($P_STRATEGY)" ;;
   esac
 }
+
+# -- this terminal's own screen and keyboard (Orcabot: the privileged socket in the PTY
+#    pool, else MCPLocal with this terminal's MCP secret) ----------------------------------
+own() {  # method path [json]
+  if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
+    curl -s --max-time 15 -X "$1" -H 'Content-Type: application/json' ${3:+--data-binary "$3"} "$POKER_OWN_URL$2"
+  elif [ -S "$SOCK" ]; then
+    curl -s --max-time 15 --unix-socket "$SOCK" -X "$1" -H 'Content-Type: application/json' ${3:+--data-binary "$3"} "http://localhost$2"
+  else
+    curl -s --max-time 15 -X "$1" -H "X-MCP-Secret: ${ORCABOT_MCP_SECRET:-}" -H 'Content-Type: application/json' \
+      ${3:+--data-binary "$3"} "http://127.0.0.1:${ORCABOT_MCP_PORT:-8081}/sessions/${ORCABOT_SESSION_ID:-}/ptys/${ORCABOT_PTY_ID:-}$2"
+  fi
+}
+
+# A setup question the agent is still waiting on (login, trust this folder, ...), from the
+# end of this terminal's screen; empty if it looks ready for a prompt.
+waiting_on() {
+  own GET /scrollback | python3 -c 'import re,sys
+t=re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^_].*?(\x07|\x1b\\)|\x1b.", " ", sys.stdin.read()[-4000:]).lower()
+t=re.sub(r"\s+"," ",t)
+for q in ("select login method","how would you like to authenticate","sign in with chatgpt","log in with your",
+          "choose the text style","do you trust","trust this folder","bypass permissions mode","yes, i accept",
+          "press enter to continue","paste code here","browser didn"):
+    if q in t:
+        print(q); break' 2>/dev/null
+}
+
+type_in() {  # file [clear-command]: give the agent the prompt, as if pasted at its prompt
+  if [ -n "${2:-}" ]; then
+    own POST /input "{\"text\": \"$2\", \"enter\": true}" >/dev/null; sleep 4
+  fi
+  own POST /input "$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read().rstrip("\n"), "paste": True, "enter": True}))' "$1")"
+}
+
+# This terminal's defaults, as JSON for the engine.
+if [ "$MODE" = helper ]; then
+  case "${2:-}" in
+    anthropic) PLAYER=claude-code; CLEAR=/clear ;;
+    openai) PLAYER=codex; CLEAR=/new ;;
+    google) PLAYER=gemini-cli; CLEAR=/clear ;;
+    *) echo "seat.sh helper: vendor must be anthropic, openai or google"; exit 2 ;;
+  esac
+  export PLAYER
+fi
+DEFAULT=$(python3 -c 'import json,os
+e=os.environ.get
+p={"kind":e("PLAYER") or "house"}
+for k in ("model","provider","effort","strategy"):
+    v=e(k.upper())
+    if v: p[k]=v
+print(json.dumps(p))')
+
+# ---- an agent terminal's helper: in the background, no output on the agent's screen ----------
+if [ "$MODE" = helper ]; then
+  exec >>"${TMPDIR:-/tmp}/pokerbench-seat-$(id -u)-${ORCABOT_PTY_ID:-local}.log" 2>&1
+  echo "[seat] REVISION: $REVISION helper ($PLAYER) loaded at $(date -u +%FT%TZ)"
+  ready_at=; ready_game=; given=; given_any=
+  while :; do
+    until engine_up; do sleep 3; done
+    SEAT=$(my_seat)
+    [ -n "$SEAT" ] || { sleep 3; continue; }
+    export POKER_URL POKER_SEAT="$SEAT" POKER_TOKEN_FILE="$POKER_TOKENS_DIR/$SEAT.token"
+    if [ "$POKER_STARTED" = 1 ]; then
+      if [ "$given" != "$POKER_GAME" ] && [ "$ready_game" = "$POKER_GAME" ]; then
+        case " $POKER_SEATS " in *" $SEAT "*)
+          q=$(waiting_on)
+          if [ -n "$q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$q\""; sleep 3; continue; fi
+          echo "$(date -u +%T) game $POKER_GAME started: giving the agent its prompt"
+          type_in "$PUB/prompt.txt" ${given_any:+"$CLEAR"} && given=$POKER_GAME && given_any=1 ;;
+        esac
+      fi
+      sleep 3; continue
+    fi
+    P_STATUS=; eval "$(setup)" 2>/dev/null
+    [ -n "$P_STATUS" ] || { sleep 3; continue; }
+    check
+    if [ -z "$NEED" ]; then
+      q=$(waiting_on)
+      [ -n "$q" ] && NEED="$P_LABEL is waiting for you in its terminal (\"$q\")"
+    elif [ -n "$KEY" ]; then
+      NEED="$NEED: log in in its terminal, or add $KEY in Orcabot's secrets and restart it"
+    fi
+    if [ -n "$NEED" ]; then
+      report needs "$NEED"; ready_at=; ready_game=
+      sleep 3; continue
+    fi
+    if [ "$ready_at" != "$POKER_GAME:$SEAT" ]; then
+      export POKER_SEAT_INFO="$(info)"
+      "$PUB/bin/poker" state >/dev/null || { sleep 3; continue; }  # check in
+      ready_at="$POKER_GAME:$SEAT"; ready_game=$POKER_GAME
+      echo "$(date -u +%T) seat $SEAT ready as $P_LABEL"
+    fi
+    sleep 3
+  done
+fi
+
+# ---- a bot terminal: in the foreground -------------------------------------------------------
+echo "[seat] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
+# Ctrl-C: a shell. Restart the terminal afterwards to take the seat again.
+trap 'echo; echo "A shell: restart this terminal to take the seat again."; exec bash -i' INT
+said=
+say_once() { [ "$1" = "$said" ] || { echo "$1"; said=$1; }; }
 
 ready_at=; ready_game=; told=
 while :; do
@@ -144,8 +233,7 @@ while :; do
       report needs "$NEED"
       if [ "$told" != "$P_REV:$POKER_GAME:$NEED" ]; then
         echo; echo "Seat $SEAT can't play as $P_LABEL yet: $NEED."
-        [ -n "$HOWTO" ] && echo "  To sign in: press Ctrl-C for a shell, $HOWTO, then restart this terminal,"
-        [ -n "$KEY" ] && echo "  ${HOWTO:+or }add $KEY in Orcabot's secrets and restart this terminal,"
+        [ -n "$KEY" ] && echo "  Add $KEY in Orcabot's secrets and restart this terminal,"
         echo "  or choose another player for this seat on the table page."
         echo "The game can start without this seat."; echo
         told="$P_REV:$POKER_GAME:$NEED"
@@ -165,21 +253,16 @@ trap - INT
 GAME=$POKER_GAME
 eval "$(setup)" 2>/dev/null
 export POKER_SEAT_INFO="$(info)"
-# POKER_CLI: absolute path for agents whose shell tool runs a login shell, which resets PATH (Codex).
 export PATH="$PUB/bin:$PATH" POKER_CLI="$PUB/bin/poker"
 echo "Seat $SEAT: in the game. Playing game $GAME as $P_LABEL."
 case "$P_KIND" in
-  claude-code) claude ${P_MODEL:+--model "$P_MODEL"} --dangerously-skip-permissions "$(cat "$PUB/prompt.txt")" ;;
-  # Codex's own sandbox blocks the loopback HTTP the CLI needs; the VM is the sandbox.
-  codex) codex ${P_MODEL:+-m "$P_MODEL"} --dangerously-bypass-approvals-and-sandbox "$(cat "$PUB/prompt.txt")" ;;
-  # --skip-trust: otherwise Gemini stops at a folder-trust prompt and turns YOLO off.
-  gemini-cli) gemini ${P_MODEL:+-m "$P_MODEL"} --yolo --skip-trust -i "$(cat "$PUB/prompt.txt")" ;;
   api)
     # A fresh request per decision; the call log goes to the results once the game is over.
     LOG="$HOME/pokerbench-$GAME-$SEAT.calls.jsonl"
     "$POKER_PB" llm-seat --provider "$P_PROVIDER" --model "$P_MODEL" ${P_EFFORT:+--effort "$P_EFFORT"} --log "$LOG"
     cp "$LOG" "/workspace/pokerbench-results/$GAME/seats/$SEAT.calls.jsonl" 2>/dev/null ;;
   house) "$POKER_PB" bot --strategy "$P_STRATEGY" ;;
+  *) echo "This terminal plays bots; an agent plays in its own agent terminal (link one to the engine)." ;;
 esac
 echo "Seat $SEAT: done. Restart this terminal to play the next game."
 exec bash

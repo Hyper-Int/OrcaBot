@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v11-linked-seats
+# REVISION: pokerbench-engine-v12-interactive-agents
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -47,10 +47,10 @@ from typing import Callable
 from pokerkit import Automation, Card, Deck, HandHistory, Mode, NoLimitTexasHoldem
 
 from . import REVISION as PACKAGE_REVISION
-from .players import PlayerError, label as player_label, normalize as normalize_player
+from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v11-linked-seats"
+ENGINE_REVISION = "pokerbench-engine-v12-interactive-agents"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -804,12 +804,19 @@ class Match:
             self._check_controller(uid, "choose the players of", "player_change")
             if seat not in self.cfg.seats:
                 raise ActionError("unknown_seat", f"No seat {seat!r} at this table.")
-            if (self.players.get(seat) or {}).get("kind") == "agent":
+            current = (self.players.get(seat) or {}).get("kind")
+            if current == "agent":
                 raise ActionError("bad_player", "An Agent block always plays as itself.")
+            if current in HARNESS_KINDS:
+                raise ActionError("bad_player", f"This seat is the {player_label({'kind': current})} running in its "
+                                  "terminal: change its model there, or link another terminal to the engine.")
             try:
                 player = normalize_player(player)
             except PlayerError as e:
                 raise ActionError("bad_player", str(e))
+            if player["kind"] in HARNESS_KINDS:
+                raise ActionError("bad_player", "An agent plays in its own terminal: link a Claude Code, Codex or "
+                                  "Gemini CLI terminal to the engine.")
             if self.players.get(seat) == player:
                 return self._player_view(seat)
             self.players[seat] = player

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v7-paused
+# REVISION: pokerbench-cli-v8-finds-its-seat
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v7-paused"
+CLI_REVISION = "pokerbench-cli-v8-finds-its-seat"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -182,12 +182,44 @@ def _token() -> str | None:
     return None
 
 
+def _published() -> dict:
+    """In Orcabot, where nothing told this process its seat (an agent started in its own
+    terminal before the game): the engine's address from engine.env, and this terminal's
+    seat from seats.json (the engine maps each terminal linked to it to a seat), both
+    published next to this file."""
+    pub = os.environ.get("POKER_PUB") or os.path.dirname(os.path.abspath(__file__))
+    out: dict = {}
+    try:
+        with open(os.path.join(pub, "engine.env"), encoding="utf-8") as f:
+            for line in f:
+                key, _, value = line.strip().partition("=")
+                out[key] = value.strip('"')
+    except OSError:
+        return out
+    try:
+        with open(os.path.join(pub, "seats.json"), encoding="utf-8") as f:
+            seat = json.load(f).get("by_pty", {}).get(os.environ.get("ORCABOT_PTY_ID", ""))
+        if seat:
+            out["POKER_SEAT"] = seat
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 class Client:
     def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 70.0,
                  seat: str | None = None, info: str | None = None):
-        self.url = (url or os.environ.get("POKER_URL") or DEFAULT_URL).rstrip("/")
+        found = _published() if not (url or os.environ.get("POKER_URL")) or not (
+            seat or os.environ.get("POKER_SEAT")) else {}
+        self.url = (url or os.environ.get("POKER_URL") or found.get("POKER_URL") or DEFAULT_URL).rstrip("/")
+        self.seat = seat if seat is not None else (os.environ.get("POKER_SEAT") or found.get("POKER_SEAT") or None)
         self.token = token if token is not None else _token()
-        self.seat = seat if seat is not None else (os.environ.get("POKER_SEAT") or None)
+        if self.token is None and self.seat and found.get("POKER_TOKENS_DIR"):
+            try:  # readable where seats share the engine's user (no PTY pool)
+                with open(os.path.join(found["POKER_TOKENS_DIR"], f"{self.seat}.token"), encoding="utf-8") as f:
+                    self.token = f.read().strip() or None
+            except OSError:
+                pass
         # Who is playing this seat, e.g. "anthropic/claude-code": self-reported, first one wins.
         self.info = info if info is not None else (os.environ.get("POKER_SEAT_INFO") or None)
         self.timeout = timeout

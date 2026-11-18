@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v10-choose-players -->
+<!-- REVISION: pokerbench-spectator-v11-interactive-agents -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -267,8 +267,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v10-choose-players
-console.log(`[spectator] REVISION: pokerbench-spectator-v10-choose-players loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v11-interactive-agents
+console.log(`[spectator] REVISION: pokerbench-spectator-v11-interactive-agents loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -420,7 +420,7 @@ function render() {
     const ready = s.joined.length;
     if (s.start === "manual") {
       center = `<div class="message">${ready >= 2 ? `${ready} players are ready.` : ready === 1 ? "1 player is ready. A game needs at least 2." : "Waiting for players to sit down."}
-        <small>${n ? "Click a seat to choose its player. " : ""}Link a terminal or Agent block to the engine to add a player. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.</small></div>
+        <small>Log in to each agent in its own terminal${n ? "; click a bot seat to change it" : ""}. Link a terminal or Agent block to the engine to add a player. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.</small></div>
         <div class="actions">
           ${settings && settings.editable ? `<button class="big ghost" data-open="settings">⚙ SETTINGS</button>` : ""}
           <button class="big" data-action="start" ${ready >= 2 && !busy ? "" : "disabled"}>${busy ? "STARTING…" : "START"}</button>
@@ -500,26 +500,27 @@ function render() {
 }
 
 // ---- players: what plays each seat, chosen here until the start ---------------------
+// A bot seat can be switched between these. An agent (Claude Code, Codex, Gemini CLI)
+// plays in its own terminal, where you log in as usual; link one to the engine to add it.
 const KINDS = [
-  ["claude-code", "Claude Code", "Anthropic's coding agent, in this seat's terminal. Needs a Claude sign-in or ANTHROPIC_API_KEY."],
-  ["codex", "Codex", "OpenAI's coding agent, in this seat's terminal. Needs a ChatGPT sign-in or OPENAI_API_KEY."],
-  ["gemini-cli", "Gemini CLI", "Google's coding agent, in this seat's terminal. Needs a Google sign-in or GEMINI_API_KEY."],
   ["api", "Model via API", "A model asked straight through its provider's API each turn, with no agent. Needs that provider's key."],
   ["house", "House bot", "A simple rules-based player. Needs nothing, so a game can always start."],
 ];
+const BOT_KINDS = KINDS.map((k) => k[0]);
 const STRATEGY_TEXT = { tight: "Plays strong hands and bets made hands.", random: "Any legal action.", call: "Always checks or calls." };
 let draft = null;            // the player being edited: {seat, kind, model, provider, effort, strategy}
 
 function canChoose(seat) {
   const s = state;
   return Boolean(s && s.status === "waiting_for_players" && settings && settings.editable
-    && ((s.players || {})[seat] || {}).kind !== "agent");
+    && BOT_KINDS.includes(((s.players || {})[seat] || {}).kind));
 }
 
 function shortStatus(why) {
   const m = why.message || "";
   if (why.state === "switching") return "switching…";
-  if (/signed in/.test(m)) return "not signed in";
+  if (/signed in/.test(m)) return "log in in its terminal";
+  if (/waiting for you/.test(m)) return "see its terminal";
   if (/API key/.test(m)) return "needs an API key";
   if (/no player/.test(m)) return "pick a player";
   return why.state === "needs" ? "can't play yet" : "checking…";
@@ -527,7 +528,7 @@ function shortStatus(why) {
 
 function openPlayer(seat) {
   if (!canChoose(seat)) return;
-  const p = (state.players || {})[seat] || { kind: "claude-code" };
+  const p = (state.players || {})[seat] || { kind: "house" };
   draft = { seat, kind: p.kind, model: p.model || "", provider: p.provider || "anthropic", effort: p.effort || "",
             strategy: p.strategy || "tight" };
   el("player-title").textContent = `Seat: ${seat}`;
