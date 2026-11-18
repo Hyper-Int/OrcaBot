@@ -39,6 +39,22 @@ describe('warm pool images', () => {
     expect(staleWarmMachines(pool, machines, NEW).map((w) => w.machine_id)).toEqual(['warm-old']);
     expect(staleWarmMachines(pool, machines, '')).toEqual([]);
   });
+
+  it('pool machines of another size are stale too', () => {
+    const PERF = { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 };
+    const pool = [
+      { machine_id: 'warm-shared', volume_id: 'v1' },
+      { machine_id: 'warm-perf', volume_id: 'v2' },
+      { machine_id: 'warm-unknown-size', volume_id: 'v3' },
+    ];
+    const machines = [
+      { id: 'warm-shared', config: { image: NEW, guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 4096 } } },
+      { id: 'warm-perf', config: { image: NEW, guest: { ...PERF } } },
+      { id: 'warm-unknown-size', config: { image: NEW } },  // nothing to compare: kept
+    ];
+    expect(staleWarmMachines(pool, machines, NEW, PERF).map((w) => w.machine_id)).toEqual(['warm-shared']);
+    expect(staleWarmMachines(pool, machines, NEW).map((w) => w.machine_id)).toEqual([]);  // size not asked about
+  });
 });
 
 const DEV = 'https://api.dev.orcabot.com';

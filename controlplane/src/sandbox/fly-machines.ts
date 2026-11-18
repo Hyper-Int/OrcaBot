@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v4-disable-autostop
-const MODULE_REVISION = 'fly-provisioning-v4-disable-autostop';
+// REVISION: fly-provisioning-v5-performance-cpu
+const MODULE_REVISION = 'fly-provisioning-v5-performance-cpu';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -45,6 +45,14 @@ export interface FlyGuestConfig {
   cpus: number;
   memory_mb: number;
 }
+
+/**
+ * The size of every dashboard and warm-pool VM. Performance CPUs: on shared CPUs a
+ * dashboard's boot (Chromium, several agents, installs) used up the burst allowance and
+ * Fly throttled the VM to its baseline (most CPU time went to steal), so everything in
+ * it crawled. The warm pool retires machines of another size (staleWarmMachines).
+ */
+export const SANDBOX_GUEST: FlyGuestConfig = { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 };
 
 export interface FlyServicePort {
   port: number;
@@ -388,11 +396,7 @@ export class FlyMachinesClient {
       region: opts.region,
       config: {
         image: opts.image,
-        guest: {
-          cpu_kind: 'shared',
-          cpus: 2,
-          memory_mb: 4096,
-        },
+        guest: { ...SANDBOX_GUEST },
         env: {
           PORT: '8080',
           ...opts.env,
