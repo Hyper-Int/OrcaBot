@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v7-agent-blocks
+# REVISION: pokerbench-main-v9-start-pause
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -29,9 +29,9 @@ from .bots import STRATEGIES, play
 from .cli import Client
 from .engine import ENGINE_REVISION, Match, MatchConfig
 from .report import build
-from .server import SERVER_REVISION, make_server, write_tokens
+from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v7-agent-blocks"
+MAIN_REVISION = "pokerbench-main-v9-start-pause"
 
 
 # Experiment conditions (DESIGN.md, phase 5). Each is an agent prompt plus the
@@ -72,7 +72,7 @@ def _seat_info(value: str | None) -> tuple:
 
 
 def _config(args) -> MatchConfig:
-    seats = tuple(s.strip() for s in args.seats.split(","))
+    seats = tuple(s.strip() for s in args.seats.split(",") if s.strip())
     cond = CONDITIONS[args.condition]
     tournament = args.format == "tournament"
     rig_seat = args.rig_seat
@@ -86,7 +86,7 @@ def _config(args) -> MatchConfig:
         require_join=not args.no_join_wait, require_isolation=args.require_isolation, honeypots=args.honeypots,
         format=args.format, level_hands=args.level_hands, notice_style=cond["notice_style"],
         condition=args.condition, rig_seat=rig_seat, rig_hands=args.rig_hands if rig_seat else 0,
-        seat_info=_seat_info(args.seat_info),
+        seat_info=_seat_info(args.seat_info), start=getattr(args, "start", "auto"),
     )
 
 
@@ -122,8 +122,11 @@ def cmd_serve(args) -> int:
     run_dir = Path(args.run_dir)
     match = Match(cfg, run_dir)
     tokens = write_tokens(cfg.seats, Path(args.tokens_dir))
-    srv = make_server(match, tokens, args.host, args.port)
-    print(f"pokerbench serving {cfg.seats[0]} vs {cfg.seats[1]}: {len(match.plans)} hands on "
+    control = write_control_token(Path(args.control_token_file)) if args.control_token_file else None
+    srv = make_server(match, tokens, args.host, args.port, tokens_dir=Path(args.tokens_dir), control_token=control)
+    who = " vs ".join(cfg.seats) if len(cfg.seats) == 2 else f"{len(cfg.seats)} seats ({', '.join(cfg.seats)})"
+    when = "when Start is pressed on the table page" if cfg.start == "manual" else "once every seat has joined"
+    print(f"pokerbench serving {who}, starting {when}: {len(match.plans)} hands on "
           f"http://{args.host}:{srv.server_port}/  run dir {run_dir}  tokens {args.tokens_dir}", flush=True)
 
     def finish_watch():
@@ -135,7 +138,7 @@ def cmd_serve(args) -> int:
             # Stay up until every seat has been shown the final result (an agent
             # mid-`poker wait` would otherwise see "connection refused").
             with match.cond:
-                match.cond.wait_for(lambda: match.final_seen >= set(cfg.seats), timeout=args.final_grace)
+                match.cond.wait_for(lambda: match.final_seen >= set(match.cfg.seats), timeout=args.final_grace)
             time.sleep(1)
             srv.shutdown()
 
@@ -316,6 +319,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--run-dir", required=True, help="where logs and results go (keep out of agent reach)")
     s.add_argument("--tokens-dir", required=True, help="one <seat>.token file per seat is written here")
     s.add_argument("--exit-when-done", action="store_true")
+    s.add_argument("--start", choices=["auto", "manual"], default="auto",
+                   help="auto: once every seat has joined; manual: when Start is pressed on the table "
+                        "page, with the seats that joined (seats can be added until then)")
+    s.add_argument("--control-token-file", help="write the engine's control token here (adds seats while waiting)")
     s.add_argument("--final-grace", type=float, default=600.0,
                    help="with --exit-when-done, max seconds to wait for seats to see the result")
     s.set_defaults(fn=cmd_serve)
