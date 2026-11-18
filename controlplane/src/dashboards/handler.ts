@@ -83,7 +83,7 @@ function fоrmatSessiоn(row: Record<string, unknown>) {
   };
 }
 
-function formatEdge(row: Record<string, unknown>): DashboardEdge {
+export function formatEdge(row: Record<string, unknown>): DashboardEdge {
   return {
     id: row.id as string,
     dashboardId: row.dashboard_id as string,
