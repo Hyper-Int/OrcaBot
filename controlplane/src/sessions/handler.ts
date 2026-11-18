@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v31-error-codes
-const sessionsRevision = "sessions-v31-error-codes";
+// REVISION: sessions-v32-warm-pool-owner
+const sessionsRevision = "sessions-v32-warm-pool-owner";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -22,6 +22,7 @@ import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
 import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
+import { pickOwnWarmMachine, sandboxControlplaneUrl } from '../sandbox/warm-pool';
 import { detectAgentType, logServerEvent } from '../analytics/handler';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
@@ -771,22 +772,10 @@ async function claimWarmMachine(
   now: string,
   preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | null> {
-  // Claim a warm machine: prefer one in the user's region, fall back to any available
-  let warm: { machine_id: string; volume_id: string } | null = null;
-
-  if (preferredRegion) {
-    warm = await env.DB.prepare(`
-      SELECT machine_id, volume_id FROM warm_machines WHERE region = ? LIMIT 1
-    `).bind(preferredRegion).first<{ machine_id: string; volume_id: string }>();
-  }
-
-  // Fall back to any region (any warm machine beats cold provisioning)
-  if (!warm) {
-    warm = await env.DB.prepare(`
-      SELECT machine_id, volume_id FROM warm_machines LIMIT 1
-    `).first<{ machine_id: string; volume_id: string }>();
-  }
-
+  // Claim one of *this control plane's* warm machines (dev and production share the
+  // table, and a VM reports to the control plane that made it): prefer the user's
+  // region, fall back to any (any warm machine beats cold provisioning).
+  const warm = await pickOwnWarmMachine(env.DB, sandboxControlplaneUrl(env), preferredRegion);
   if (!warm) return null;
 
   const { machine_id: machineId, volume_id: volumeId } = warm;
