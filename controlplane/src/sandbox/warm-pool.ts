@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: warm-pool-v2-machine-controlplane-url
-const MODULE_REVISION = 'warm-pool-v2-machine-controlplane-url';
+// REVISION: warm-pool-v3-prune-stale-images
+const MODULE_REVISION = 'warm-pool-v3-prune-stale-images';
 console.log(`[warm-pool] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -77,6 +77,57 @@ export async function pickOwnWarmMachine(
   return db.prepare(
     `SELECT machine_id, volume_id FROM warm_machines WHERE ${own.sql} LIMIT 1`,
   ).bind(...own.binds).first<{ machine_id: string; volume_id: string }>();
+}
+
+/** All of `owner`'s warm machines (still in the pool: none is in use by a dashboard). */
+export async function listOwnWarmMachines(
+  db: D1Database, owner: string,
+): Promise<{ machine_id: string; volume_id: string }[]> {
+  const own = ownRows(owner);
+  const r = await db.prepare(`SELECT machine_id, volume_id FROM warm_machines WHERE ${own.sql}`)
+    .bind(...own.binds).all<{ machine_id: string; volume_id: string }>();
+  return r.results || [];
+}
+
+/**
+ * The newest image any machine runs: deploy tags carry a ULID, so the highest sorts
+ * last-deployed. (Same rule as FlyMachinesClient.discoverImage, on a list already fetched.)
+ */
+export function newestImage(machines: { config?: { image?: string } }[]): string | undefined {
+  const images = machines.map((m) => m.config?.image).filter((i): i is string => Boolean(i));
+  if (images.length === 0) return undefined;
+  return images.sort((a, b) => b.localeCompare(a))[0];
+}
+
+/**
+ * Warm machines that run an image other than `image` (the one new machines get).
+ *
+ * After a deploy, Fly moves machines to the new image gradually, and a warm machine
+ * made in that window (or before the deploy) keeps the old one until a dashboard
+ * claims it. Machines Fly doesn't list (already gone) or that have no image aren't
+ * returned: there's nothing to compare, and the reaper handles the missing.
+ */
+export function staleWarmMachines(
+  pool: { machine_id: string; volume_id: string }[],
+  machines: { id: string; config?: { image?: string } }[],
+  image: string,
+): { machine_id: string; volume_id: string }[] {
+  if (!image) return [];
+  const imageOf = new Map(machines.map((m) => [m.id, m.config?.image]));
+  return pool.filter((w) => {
+    const current = imageOf.get(w.machine_id);
+    return Boolean(current) && current !== image;
+  });
+}
+
+/**
+ * Takes a warm machine out of the pool so it can be destroyed. True only if this call
+ * removed it: false means a dashboard claimed it first (claiming deletes the same row),
+ * and it must not be touched.
+ */
+export async function releaseWarmMachine(db: D1Database, machineId: string): Promise<boolean> {
+  const r = await db.prepare(`DELETE FROM warm_machines WHERE machine_id = ?`).bind(machineId).run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 /** Records a new warm machine as `owner`'s. */
