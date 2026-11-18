@@ -53,8 +53,10 @@ decision latency, timeouts, invalid actions, and any request a seat made outside
 the documented API (the hook for the phase-3 integrity work).
 
 **Starting and pausing:** `--start auto` (the default) starts once every seat has
-joined. `--start manual` holds a lobby: seats join, `POST /api/table/seats` (with the
-engine's control token) adds more, and `POST /api/table/start` (the table page's Start
+joined. `--start manual` holds a lobby: seats join, `POST /api/table/seats`, `/seats/remove`
+and `/seats/bind` (the engine's control token; `pokerbench host` uses them as things
+are linked and unlinked) add, remove and bind seats to their terminal's OS user, and
+`POST /api/table/start` (the table page's Start
 button) starts with whoever has joined; the rest are left out. `POST /api/table/pause`
 and `/resume` (Pause and Resume) stop and restart the game: while paused nobody gets a
 new turn and the turn clock stops; a decision already in progress still counts. The
@@ -65,6 +67,14 @@ blind levels, turn timeout, condition, honeypot mode and seed, and `POST` change
 of them (the table page's Settings button). They're fixed once the game starts.
 They're not in `/api/spectate`, which seats can read, because a `hidden` honeypot must
 stay hidden; the engine's control token (`X-Poker-Control`) also reads them.
+
+**Players:** `POST /api/table/players {seat, player}` chooses what plays a seat
+(`{"kind": "claude-code" | "codex" | "gemini-cli" | "api" | "house", "model", ...}`,
+[`pokerbench/players.py`](pokerbench/players.py)), from the table page, before the
+start; the seat drops back out of *ready* until it checks in as the new player. A seat
+terminal asks `POST /api/seat/setup` what to play (sending its own default) and says
+why it can't yet with `POST /api/seat/status`; neither counts as checking in.
+`/api/spectate` shows each seat's player and status.
 
 **Turn timeout:** 120s by default. On timeout the engine checks if that is free,
 otherwise it folds.
@@ -175,20 +185,32 @@ benchmarks/pokerbench/bin/build-template          # only after editing the gener
 benchmarks/bin/seed-benchmark-templates pokerbench
 ```
 
-**Starting a game:**
-1. The engine terminal starts a table and waits for players.
-2. The table page (the browser block) shows each seat as *ready* or *not here yet*.
-3. Each seat terminal checks it can play before checking in. If it can't, its terminal
-   says what's missing: sign in to that agent there, or add the provider's key in
-   Orcabot's secrets, then restart the terminal.
-4. An Agent block connected to the engine takes a seat by itself once it's linked,
-   including one linked after the engine started.
-5. Press **Settings** on the table to set up the game, then **Start**. The game
-   starts with everyone who is ready.
-   Seats that aren't ready are left out and wait for the next game. The house bot
-   needs no keys, so an outside agent against the house always works.
+**Players are what's linked to the engine.** Every terminal and Agent block with a link
+to the engine terminal on the canvas takes a seat, named after it on the canvas. Link
+one to add a player, delete the link to remove it (before Start). Renaming the terminal
+renames the seat. Orcabot tells the engine terminal what is linked to it
+(`GET /links` on the sandbox, from the canvas edges in the control plane), and in the
+PTY pool also which OS user each linked terminal runs as. The engine binds each seat to
+that user, so no other terminal can play it. [`pokerbench host`](pokerbench/host.py)
+keeps the table in step with the canvas.
 
-The dashboard has one component per player:
+**Starting a game:**
+1. The engine terminal starts a table and seats what's linked to it.
+2. The table page (the browser block) shows each seat as *ready*, *not here yet*, or
+   what's missing (*not signed in*, *needs an API key*).
+3. **Click a seat** to choose what plays it: Claude Code, Codex, Gemini CLI, a model
+   through its API (provider, model, effort), or the house bot (strategy). The seat's
+   terminal switches by itself; its boot command only holds the default.
+4. A seat that can't play says what's missing, in its terminal and on the table: sign
+   in there (Ctrl-C gives a shell), or add the provider's key in Orcabot's secrets, then
+   restart the terminal. Or pick a different player for the seat.
+5. An Agent block linked to the engine takes a seat once its agent is linked, and
+   plays by chat.
+6. Press **Settings** to set up the game, then **Start**. The game starts with every
+   seat that is ready; the rest wait for the next game. The house bot needs no keys,
+   so an outside agent against the house always works.
+
+The dashboard:
 - an **engine** terminal. Its boot command starts with the table settings:
 
   ```
@@ -200,47 +222,57 @@ The dashboard has one component per player:
   SEED=0
   TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
   START=manual          # manual: press Start on the table page | auto: when every seat is ready
-  SEATS="claude-code codex gemini-cli sonnet house"
   REF=main              # branch or tag to install
   ```
 
   With `START=manual`, FORMAT to TURN_TIMEOUT are only the defaults for the table
-  page's Game settings, where you change them before Start. SEATS, START and REF
-  (and the defaults) are changed here: edit them (terminal settings, or ask Orcabot
-  chat), then restart the engine. The
-  rest of the boot command installs PokerBench from this repo (reinstalling when REF's
-  commit changes) and runs [`bin/table-engine`](bin/table-engine), which is versioned
-  with the code, so most changes need no reseeding.
-- **agent seat** terminals (Claude Code, Codex, Gemini CLI). Each checks its sign-in,
-  checks in when the engine lists its `SEAT=` in SEATS, waits for the deal, then starts
-  its agent with the prompt the engine rendered for the table that started.
-  `MODEL=""` picks the model. With a Gemini key, the Gemini seat selects it, so the CLI
-  doesn't stop to ask how to sign in.
-- **model seat** terminals: a model played straight through its provider's API
-  (`pokerbench llm-seat`), set by `SEAT`, `PROVIDER`, `MODEL`, `EFFORT`. The terminal
-  shows a live feed: each situation, then the model's action, reason, latency and
-  tokens. Its call log stays in the seat's home until the game ends, then goes to
-  `results/<game>/seats/`, so no other seat can read its reasoning mid-game.
-- a **house bot** terminal: a simple rules player (`pokerbench bot`, `STRATEGY`).
-- an **Agent** block, connected to the engine terminal: an outside AI agent (Grok Bot,
-  Muse, Dots, Claude Code, Codex, ...) running on its own computer. The block shows what
-  to paste into the agent, and the user types the pairing code the agent sends back.
-  While the table waits for the deal, every linked Agent block connected to the engine
-  terminal is seated, named after the agent (see [Agent blocks](#agent-blocks-outside-agents-as-players)).
-- a **table** browser block: the poker table (seats round the felt, bets, the board and
-  pot, the player to act with their clock, each finished hand's cards for a few
-  seconds), Start before the game and Pause/Resume during it, a leaderboard and recent hands.
+  page's Settings, where you change them before Start. START and REF (and the
+  defaults) are changed here: edit them (terminal settings, or ask Orcabot chat), then
+  restart the engine. `SEATS="a b"` (optional, not in the template) seats terminals
+  that aren't linked, for a sandbox too old to report links or outside Orcabot; such a
+  terminal sets `SEAT=` to its name. The rest of the boot command installs PokerBench
+  from this repo (reinstalling when REF's commit changes) and runs
+  [`bin/table-engine`](bin/table-engine), which is versioned with the code, so most
+  changes need no reseeding.
+- five **seat** terminals, each linked to the engine: Claude Code, Codex, Gemini CLI,
+  Claude Sonnet (API) and House bot. They differ only in their defaults:
 
-Adding a player is duplicating a seat terminal, giving it a new `SEAT=` and adding the
-name to SEATS; a seat not in SEATS just waits. Seats introduce themselves when they
-join (`POKER_SEAT_INFO`, e.g. `anthropic/claude-code (claude-sonnet-5-5)`); the
-spectator page and report show it, and the collusion screen groups seats by the
-provider in it. It is self-reported, so `--seat-info` on the engine overrides it.
+  ```
+  PLAYER=api              # claude-code | codex | gemini-cli | api | house
+  PROVIDER=anthropic      # api: anthropic | openai | gemini
+  MODEL=claude-sonnet-5-5 # blank: the player's default model
+  EFFORT=                 # api: optional effort (anthropic/openai) or thinking level (gemini)
+  export PLAYER PROVIDER MODEL EFFORT
+  exec bash /tmp/pokerbench/seat.sh
+  ```
+
+  [`bin/seat`](bin/seat), which the engine publishes as `seat.sh`, does the rest: finds
+  its seat, asks the engine what to play, checks that player can play here, checks in,
+  waits for Start, then plays. An agent gets the prompt the engine rendered for the
+  table that started. An API model (`pokerbench llm-seat`) shows a live feed: each
+  situation, then the model's action, reason, latency and tokens; its call log stays in
+  the seat's home until the game ends, then goes to `results/<game>/seats/`, so no
+  other seat can read its reasoning mid-game. The house bot is `pokerbench bot`. With a
+  Gemini key, a Gemini seat selects it, so the CLI doesn't stop to ask how to sign in.
+  To add a player, copy a seat terminal (or ask Orcabot chat for one) and link it.
+- an **Agent** block, linked to the engine terminal: an outside AI agent (Grok Bot,
+  Muse, Dots, Claude Code, Codex, ...) running on its own computer. The block shows what
+  to paste into the agent, and the user types the pairing code the agent sends back
+  (see [Agent blocks](#agent-blocks-outside-agents-as-players)).
+- a **table** browser block, linked from the engine: the poker table (seats round the
+  felt, bets, the board and pot, the player to act with their clock, each finished
+  hand's cards for a few seconds). In the lobby: choosing each seat's player, Settings
+  and Start; during the game, Pause/Resume; a leaderboard and recent hands.
+
+Seats introduce themselves when they join (`POKER_SEAT_INFO`, e.g.
+`anthropic/claude-code (opus)`); the table page and report show it, and the collusion
+screen groups seats by the provider in it. It is self-reported, so `--seat-info` on the
+engine overrides it.
 
 The agents' and models' provider keys come from the usual Orcabot secrets: the SDKs
 and CLIs send requests to the local secrets broker (`*_BASE_URL`), which adds the key.
 
-Agent launch lines live in `bin/build-template`:
+Agent launch lines live in [`bin/seat`](bin/seat):
 - **Claude Code** runs with `--dangerously-skip-permissions`: a general shell like
   the others, since the prompt allows writing tools and integrity runs need the
   honeypot reachable.
@@ -303,10 +335,10 @@ engine terminal and it takes a seat.
   a small connector and sends back an 8-character pairing code; the user types it into
   the block. No other app or phone is involved: Orcabot's control plane holds an owner
   identity on the agent hub for each user (server to server) and approves the code.
-- **Seating:** `table-engine` runs `pokerbench agents` in the engine terminal, which
-  lists the Agent blocks connected to it (the sandbox asks the control plane, from the
-  canvas edges), adds each to SEATS under the agent's name, and runs `pokerbench
-  agent-seat` for it. Its decisions appear in the engine terminal, prefixed `[name]`.
+- **Seating:** `pokerbench host`, in the engine terminal, asks the sandbox which Agent
+  blocks are linked to it (from the canvas edges, via the control plane), seats each
+  under the agent's name, and runs `pokerbench agent-seat` for it. Its decisions appear
+  in the engine terminal, prefixed `[name]`.
 - **Each turn** is one chat message (intro the first time, then the hands since the
   agent's last turn, then the current hand); the reply's one-line JSON (found anywhere
   in it, or an `ACTION:` line) is its move, through the same loop as direct model seats

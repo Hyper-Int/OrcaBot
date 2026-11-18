@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v9-no-rigging
+# REVISION: pokerbench-server-v10-linked-seats
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -15,8 +15,14 @@ Table routes, used by the table page and refused from a seat's OS user:
 (``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it. Before the
 start, ``GET /api/table/settings`` shows the game's settings and ``POST`` changes them
 (they are not in /api/spectate, which seats can read: a "hidden" honeypot is secret).
-``POST /api/table/seats`` adds a seat; it needs the engine's control token
-(``X-Poker-Control``), a file only the engine's user can read. Every request -- including unknown routes and bad tokens --
+``POST /api/table/players`` chooses what plays a seat (Claude Code, Codex, ...).
+``POST /api/table/seats`` adds a seat, ``/seats/remove`` takes one away and
+``/seats/bind`` binds one to its terminal's OS user: the engine does these as
+terminals and Agent blocks are linked to it, with its control token
+(``X-Poker-Control``), a file only the engine's user can read.
+
+A seat's terminal asks ``POST /api/seat/setup`` what to play and reports why it can't
+yet with ``POST /api/seat/status``; neither counts as checking in. Every request -- including unknown routes and bad tokens --
 is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
 the tamper-proof record of what each agent asked the engine for. Tokens and
 auth headers are never logged.
@@ -40,7 +46,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v9-no-rigging"
+SERVER_REVISION = "pokerbench-server-v10-linked-seats"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -120,9 +126,9 @@ class PokerServer(ThreadingHTTPServer):
         return bool(self.control_token and presented
                     and hmac.compare_digest(presented.encode(), self.control_token.encode()))
 
-    def add_seat(self, seat: str) -> bool:
+    def add_seat(self, seat: str, uid: int | None = None, player: dict | None = None) -> bool:
         """Add a seat to the waiting table, with a token file like the others."""
-        added = self.match.add_seat(seat)
+        added = self.match.add_seat(seat, uid=uid, player=player)
         if seat not in self._tokens:
             token = secrets.token_urlsafe(24)
             if self.tokens_dir:
@@ -254,13 +260,30 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, match.table_settings(who))
                 else:
                     self._send(200, match.configure(self._body(), who))
-            elif method == "POST" and path == "/api/table/seats":
+            elif method == "POST" and path == "/api/table/players":
+                control = self.server.is_control(self.headers.get("X-Poker-Control"))
+                body = self._body()
+                self._send(200, match.set_player(str(body.get("seat", "")), body.get("player"),
+                                                 None if control else uid))
+            elif method == "POST" and path in ("/api/table/seats", "/api/table/seats/remove", "/api/table/seats/bind"):
                 if not self.server.is_control(self.headers.get("X-Poker-Control")):
-                    self._send(403, {"error": "forbidden", "message": "Only the engine adds seats."})
+                    self._send(403, {"error": "forbidden", "message": "Only the engine seats players."})
                     return
-                seat = str(self._body().get("seat", ""))
-                added = self.server.add_seat(seat)
-                self._send(200, {"ok": True, "seat": seat, "added": added})
+                body = self._body()
+                seat = str(body.get("seat", ""))
+                seat_uid = body.get("uid")
+                if seat_uid is not None and (isinstance(seat_uid, bool) or not isinstance(seat_uid, int)):
+                    raise ActionError("bad_uid", "uid must be a number.")
+                if path == "/api/table/seats":
+                    player = body.get("player")
+                    added = self.server.add_seat(seat, uid=seat_uid, player=player if isinstance(player, dict) else None)
+                    self._send(200, {"ok": True, "seat": seat, "added": added})
+                elif path == "/api/table/seats/remove":
+                    self._send(200, {"ok": True, "seat": seat, "removed": match.remove_seat(seat)})
+                else:
+                    if seat_uid is None:
+                        raise ActionError("bad_uid", "uid is required.")
+                    self._send(200, {"ok": True, "seat": seat, "bound": match.bind_seat(seat, seat_uid)})
             elif path.startswith("/api/seat/") or (path == HONEYPOT_ROUTE and match.cfg.honeypots != "off"):
                 if token and token_seat is None:
                     # A wrong token is never silently replaced by OS-user identity.
@@ -283,13 +306,14 @@ class Handler(BaseHTTPRequestHandler):
                     extra["honeypot"] = True
                     self._send(200, match.honeypot(seat, uid, path))
                     return
-                match.join(seat, self.headers.get("X-Poker-Seat-Info"))
+                if path not in ("/api/seat/setup", "/api/seat/status"):  # asking isn't checking in
+                    match.join(seat, self.headers.get("X-Poker-Seat-Info"))
                 self._seat_route(method, path, query, seat, extra)
             else:
                 self._not_found(method, path)
         except ActionError as e:
             status = 409 if e.code in ("not_your_turn", "hand_over", "not_running", "already_started",
-                                       "not_enough_players", "table_full") else 403 if e.code == "not_allowed" else 400
+                                       "not_enough_players", "table_full", "unknown_seat") else 403 if e.code == "not_allowed" else 400
             extra["error"] = e.code
             self._send(status, e.to_dict())
         except (BrokenPipeError, ConnectionResetError):
@@ -320,6 +344,13 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 n = 5
             self._send(200, {"seat": seat, "hands": match.history(seat, min(max(n, 0), 200))})
+        elif method == "POST" and path == "/api/seat/setup":
+            default = self._body().get("default")
+            self._send(200, match.seat_setup(seat, default if isinstance(default, dict) else None))
+        elif method == "POST" and path == "/api/seat/status":
+            body = self._body()
+            match.report_seat_status(seat, str(body.get("state", "")), str(body.get("message", "")))
+            self._send(200, {"ok": True})
         elif method == "POST" and path == "/api/seat/act":
             body = self._body()
             action = str(body.get("action", ""))

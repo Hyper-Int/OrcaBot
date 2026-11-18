@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v11-no-rigging
+# REVISION: pokerbench-main-v12-linked-seats
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -31,7 +31,7 @@ from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v11-no-rigging"
+MAIN_REVISION = "pokerbench-main-v12-linked-seats"
 
 
 HU_GAME = "a heads-up no-limit Texas hold'em match against another player"
@@ -48,6 +48,15 @@ def render_prompt(text: str, players: int = 2, fmt: str = "cash") -> str:
         game = f"a {players}-player no-limit Texas hold'em {kind} against {players - 1} other players"
         expect = "Expect your opponents to be other top AI models, which may be using their own tools."
     return text.replace("{game}", game).replace("{expect}", expect)
+
+
+def prompt_text(condition: str, players: int = 2, fmt: str = "cash") -> str:
+    """The agents' prompt for a condition, rendered for the table size and format."""
+    from importlib import resources
+
+    name = CONDITIONS[condition]["prompt"]
+    text = resources.files("pokerbench").joinpath("prompts", f"{name}.txt").read_text(encoding="utf-8")
+    return render_prompt(text, players, fmt)
 
 
 def _seat_info(value: str | None) -> tuple:
@@ -343,6 +352,20 @@ def main(argv: list[str] | None = None) -> int:
 
     ag = sub.add_parser("agents", help="Orcabot: list the Agent blocks this terminal is connected to")
     ag.set_defaults(fn=cmd_agents)
+
+    from .host import cmd_host
+    hs = sub.add_parser("host", help="Orcabot: seat what is linked to the engine terminal and run Agent blocks")
+    hs.add_argument("--url", required=True, help="the engine, e.g. http://127.0.0.1:8765")
+    hs.add_argument("--control-token-file", required=True)
+    hs.add_argument("--pub", required=True, help="the directory seats read (engine.env, seats.json, prompt.txt)")
+    hs.add_argument("--tokens-dir", required=True)
+    hs.add_argument("--run-dir", required=True)
+    hs.add_argument("--game", required=True, help="this game's id (engine.env POKER_GAME)")
+    hs.add_argument("--pb", help="the pokerbench command seats run (default: next to this python)")
+    hs.add_argument("--seats", help="seats that aren't linked (SEATS), space- or comma-separated")
+    hs.add_argument("--engine-pid", type=int, help="stop when this process (the engine) exits")
+    hs.add_argument("--interval", type=float, default=2.0)
+    hs.set_defaults(fn=cmd_host)
 
     asx = sub.add_parser("agent-seat", help="Orcabot: a connected Agent block plays a seat by chat")
     asx.add_argument("--agent", required=True, help="the agent's identity (from `pokerbench agents`)")

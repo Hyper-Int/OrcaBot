@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-agentlink-v2-table-timeout
+# REVISION: pokerbench-agentlink-v3-terminal-links
 """Agent seats in Orcabot: an Agent block (an outside agent such as Grok Bot, Muse or
 Dots, linked to the dashboard owner) connected to the table's engine terminal plays
 a seat.
@@ -34,8 +34,16 @@ from collections.abc import Iterator
 from .chatseat import ChatSeat
 from .llm import ProviderError
 
-AGENTLINK_REVISION = "pokerbench-agentlink-v2-table-timeout"
+AGENTLINK_REVISION = "pokerbench-agentlink-v3-terminal-links"
 PRIVILEGED_SOCK = "/run/orcabot/privileged.sock"
+
+
+class SandboxError(ProviderError):
+    """The sandbox refused or failed a request (status is its HTTP status, 0 if unreachable)."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
 
 
 class _UnixHTTPConnection(http.client.HTTPConnection):
@@ -64,16 +72,16 @@ class AgentLinkClient:
                              "(no privileged socket and no ORCABOT_SESSION_ID/ORCABOT_PTY_ID/ORCABOT_MCP_SECRET).")
 
     def _request(self, method: str, action: str, query: dict | None = None, body: dict | None = None,
-                 timeout: float = 30.0) -> dict:
+                 timeout: float = 30.0, resource: str = "agents") -> dict:
         qs = ("?" + urllib.parse.urlencode(query)) if query else ""
         suffix = f"/{action}" if action else ""
         if self.sock:
             conn = _UnixHTTPConnection(self.sock, timeout)
-            path = f"/agents{suffix}{qs}"
+            path = f"/{resource}{suffix}{qs}"
             headers = {}
         else:
             conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=timeout)
-            path = f"/sessions/{self.session}/ptys/{self.pty}/agents{suffix}{qs}"
+            path = f"/sessions/{self.session}/ptys/{self.pty}/{resource}{suffix}{qs}"
             headers = {"X-MCP-Secret": self.secret}
         data = json.dumps(body).encode() if body is not None else None
         if data is not None:
@@ -81,14 +89,24 @@ class AgentLinkClient:
         try:
             conn.request(method, path, body=data, headers=headers)
             resp = conn.getresponse()
-            payload = json.loads(resp.read() or b"{}")
-        except (OSError, ValueError, http.client.HTTPException) as e:
-            raise ProviderError(f"agent link: {e}") from None
+            raw = resp.read() or b"{}"
+        except (OSError, http.client.HTTPException) as e:
+            raise SandboxError(f"{resource}: {e}") from None
         finally:
             conn.close()
+        try:
+            payload = json.loads(raw)
+        except ValueError:  # the sandbox's plain-text errors ("E79993: ...")
+            payload = {"error": raw.decode("utf-8", "replace").strip()[:200]}
         if resp.status >= 300:
-            raise ProviderError(f"agent link: {payload.get('error') or resp.status}")
+            raise SandboxError(f"{resource}: {payload.get('error') or resp.status}", status=resp.status)
         return payload
+
+    def links(self) -> dict:
+        """The terminals this terminal is linked to on the canvas:
+        {"terminals": [{itemId, name, ptyId, uid?}], "pool": bool}. uid only in Orcabot's
+        PTY pool (each terminal its own OS user)."""
+        return self._request("GET", "", resource="links", timeout=15)
 
     def agents(self) -> list[dict]:
         """The agents this terminal is connected to: [{identity, name, itemId}]."""

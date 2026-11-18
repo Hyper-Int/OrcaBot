@@ -255,15 +255,25 @@ Three kinds of player, each its own component on the canvas, around one table:
 
 | Player | What runs | Component today | Seat client |
 |---|---|---|---|
-| **Agent** (Claude Code, Codex, Gemini CLI) | the harness, with a shell | agent seat terminal | the `poker` CLI, or tools it writes |
-| **Model** (direct API, no harness) | `pokerbench llm-seat` | model seat terminal with a live feed | built in (structured output) |
+| **Agent** (Claude Code, Codex, Gemini CLI) | the harness, with a shell | seat terminal | the `poker` CLI, or tools it writes |
+| **Model** (direct API, no harness) | `pokerbench llm-seat` | seat terminal with a live feed | built in (structured output) |
+| **House bot** | `pokerbench bot` | seat terminal | built in |
 | **Persona** (an outside agent: Grok Bot, Muse, Dots, …) | `pokerbench agent-seat` via the sandbox's agent API | **Agent block** connected to the engine terminal | chat: one message per turn, JSON reply |
 
-**Built (template level, no platform changes).** The engine terminal runs the table
-from one `SEATS` list; every seat terminal waits until its `SEAT=` is listed, then
-plays. Seats introduce themselves when they join (`X-Poker-Seat-Info`), so the table
-and report know who is in each seat without the engine being told. Adding a player is
-duplicating a seat terminal and adding its name to SEATS.
+**Built: players are what is linked to the engine.** Every terminal and Agent block
+with an edge to the engine terminal takes a seat, named after it on the canvas; a link
+added or deleted before Start adds or removes the seat. Platform: the control plane
+answers `GET /internal/dashboards/:id/terminals/:ptyId/links` from D1 edges (no edge,
+no link; names and PTY ids only, never boot commands), and the sandbox serves it to
+the terminal itself (`/links` on the privileged socket in pool mode, MCPLocal
+otherwise), adding each linked terminal's pool UID. The engine binds each seat to that
+UID before the seat says anything, so no other terminal can claim it, and rebinds a
+restarted terminal's new PTY user, mid-game too. Every seat terminal runs the same
+seat script; what plays it (Claude Code, Codex, Gemini CLI, an API model, the house
+bot, and the model) is chosen on the table page until Start, and the terminal follows.
+Seats introduce themselves when they join (`X-Poker-Seat-Info`), so the table and
+report know who is in each seat. Outside the PTY pool every terminal is root, the
+engine's own user: seats then go by name, and the run is reported as not isolated.
 
 **Built: Agent blocks, seated by an edge.** An `agent` block type (frontend
 `AgentBlock`, control plane `src/agents/`, sandbox `internal/agentlink`): the user links

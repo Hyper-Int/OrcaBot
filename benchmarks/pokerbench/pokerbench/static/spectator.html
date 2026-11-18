@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v9-no-rigging -->
+<!-- REVISION: pokerbench-spectator-v10-choose-players -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -93,6 +93,22 @@
   .tag { display: inline-block; font-size: .95cqw; font-weight: 700; padding: .1cqw .55cqw; border-radius: 999px; margin-top: .2cqw; }
   .tag.ready { background: rgba(95,211,154,.18); color: var(--good); }
   .tag.wait { background: rgba(255,255,255,.08); color: var(--muted); }
+  .tag.need { background: rgba(242,193,78,.16); color: var(--gold); }
+  .seat.choosable .plate { cursor: pointer; }
+  .seat.choosable .plate:hover { border-color: var(--gold); }
+  .seat.choosable.away { opacity: .7; }
+  .plate .pick { font-size: .9cqw; color: var(--gold); margin-top: .15cqw; }
+  .kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .kind { font: inherit; text-align: left; cursor: pointer; padding: 10px 12px; border-radius: 10px;
+          border: 1px solid var(--line); background: rgba(255,255,255,.03); color: var(--ink); }
+  .kind b { display: block; font-size: 14px; margin-bottom: 3px; }
+  .kind span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .kind.on { border-color: var(--gold); background: rgba(242,193,78,.1); }
+  .kind:focus-visible { outline: 2px solid color-mix(in srgb, var(--gold) 70%, transparent); outline-offset: 1px; }
+  .ctl.primary { background: var(--gold); color: #2a1a05; }
+  .ctl.primary:hover { background: #ffd978; }
+  .seat-status { margin: 14px 0 0; font-size: 13px; color: var(--gold); }
+  .seat-status:empty { display: none; }
   .tag.allin { background: rgba(214,69,59,.25); color: #ffb3aa; }
   .tag.net-pos { background: rgba(95,211,154,.2); color: var(--good); }
   .tag.net-neg { background: rgba(255,125,110,.18); color: var(--bad); }
@@ -224,6 +240,17 @@
   </section>
   </dialog>
 
+  <dialog class="setup-dialog" id="player-dialog" aria-labelledby="player-title">
+  <section class="setup">
+    <div class="setup-head"><h2 id="player-title">Seat</h2><span id="player-note" class="note"></span>
+      <span class="spacer"></span><button type="button" class="ctl" id="player-cancel">Cancel</button>
+      <button type="button" class="ctl primary" id="player-save">Save</button></div>
+    <div class="kinds" id="player-kinds" role="radiogroup" aria-label="What plays this seat"></div>
+    <div class="fields" id="player-fields"></div>
+    <p class="seat-status" id="player-status"></p>
+  </section>
+  </dialog>
+
   <div class="panels">
     <section class="panel">
       <h2 id="feed-title">This hand</h2>
@@ -240,8 +267,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v9-no-rigging
-console.log(`[spectator] REVISION: pokerbench-spectator-v9-no-rigging loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v10-choose-players
+console.log(`[spectator] REVISION: pokerbench-spectator-v10-choose-players loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -324,8 +351,12 @@ function render() {
     let cls = "seat", hole = "", stack = "", st = "", extra = "";
     if (lobby) {
       const ready = s.joined.includes(seat);
+      const why = (s.seat_status || {})[seat];
       cls += ready ? " ready" : " away";
-      st = ready ? `<span class="tag ready">ready</span>` : `<span class="tag wait">not here yet</span>`;
+      if (canChoose(seat)) cls += " choosable";
+      st = ready ? `<span class="tag ready">ready</span>`
+        : why ? `<span class="tag ${why.state === "needs" ? "need" : "wait"}" title="${esc(why.message)}">${esc(shortStatus(why))}</span>`
+        : `<span class="tag wait">not here yet</span>`;
     } else if (inShow) {
       const cards = sd.hole[seat];
       const folded = (sd.folded || []).includes(seat);
@@ -371,13 +402,14 @@ function render() {
       st = `<span class="state">sitting out</span>`;
     }
     const bubble = lastBySeat[seat] && live.actor !== seat ? `<div class="bubble">${esc(actionText(lastBySeat[seat]))}</div>` : "";
-    layer += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%">
+    layer += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${esc(seat)}"${canChoose(seat) && lobby ? ` title="Choose what plays ${esc(seat)}"` : ""}>
       <div class="hole">${hole}</div>
       <div class="plate">${bubble}
         <div class="name" title="${esc(seat)}">${esc(seat)}</div>
         ${s.labels && s.labels[seat] ? `<div class="label" title="${esc(s.labels[seat])}">${esc(s.labels[seat])}</div>` : ""}
         ${stack ? `<div class="stack">${stack}</div>` : ""}
         ${st}${extra}
+        ${lobby && canChoose(seat) ? `<div class="pick">change player</div>` : ""}
       </div></div>`;
   });
   el("layer").innerHTML = layer;
@@ -388,7 +420,7 @@ function render() {
     const ready = s.joined.length;
     if (s.start === "manual") {
       center = `<div class="message">${ready >= 2 ? `${ready} players are ready.` : ready === 1 ? "1 player is ready. A game needs at least 2." : "Waiting for players to sit down."}
-        <small>Seats appear as their terminals and Agent blocks check in. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.</small></div>
+        <small>${n ? "Click a seat to choose its player. " : ""}Link a terminal or Agent block to the engine to add a player. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.</small></div>
         <div class="actions">
           ${settings && settings.editable ? `<button class="big ghost" data-open="settings">⚙ SETTINGS</button>` : ""}
           <button class="big" data-action="start" ${ready >= 2 && !busy ? "" : "disabled"}>${busy ? "STARTING…" : "START"}</button>
@@ -465,6 +497,109 @@ function render() {
       s.recent.slice().reverse().map((r) => `<tr><td>${r.hand}</td>
         ${s.seats.map((x) => `<td>${r.net[x] == null ? "–" : signed(r.net[x])}</td>`).join("")}<td>${r.showdown ? "yes" : "–"}</td></tr>`).join("")
     : `<tr><td class="muted">No hands finished yet.</td></tr>`;
+}
+
+// ---- players: what plays each seat, chosen here until the start ---------------------
+const KINDS = [
+  ["claude-code", "Claude Code", "Anthropic's coding agent, in this seat's terminal. Needs a Claude sign-in or ANTHROPIC_API_KEY."],
+  ["codex", "Codex", "OpenAI's coding agent, in this seat's terminal. Needs a ChatGPT sign-in or OPENAI_API_KEY."],
+  ["gemini-cli", "Gemini CLI", "Google's coding agent, in this seat's terminal. Needs a Google sign-in or GEMINI_API_KEY."],
+  ["api", "Model via API", "A model asked straight through its provider's API each turn, with no agent. Needs that provider's key."],
+  ["house", "House bot", "A simple rules-based player. Needs nothing, so a game can always start."],
+];
+const STRATEGY_TEXT = { tight: "Plays strong hands and bets made hands.", random: "Any legal action.", call: "Always checks or calls." };
+let draft = null;            // the player being edited: {seat, kind, model, provider, effort, strategy}
+
+function canChoose(seat) {
+  const s = state;
+  return Boolean(s && s.status === "waiting_for_players" && settings && settings.editable
+    && ((s.players || {})[seat] || {}).kind !== "agent");
+}
+
+function shortStatus(why) {
+  const m = why.message || "";
+  if (why.state === "switching") return "switching…";
+  if (/signed in/.test(m)) return "not signed in";
+  if (/API key/.test(m)) return "needs an API key";
+  if (/no player/.test(m)) return "pick a player";
+  return why.state === "needs" ? "can't play yet" : "checking…";
+}
+
+function openPlayer(seat) {
+  if (!canChoose(seat)) return;
+  const p = (state.players || {})[seat] || { kind: "claude-code" };
+  draft = { seat, kind: p.kind, model: p.model || "", provider: p.provider || "anthropic", effort: p.effort || "",
+            strategy: p.strategy || "tight" };
+  el("player-title").textContent = `Seat: ${seat}`;
+  el("player-note").textContent = ""; el("player-note").className = "note";
+  renderPlayer();
+  const d = el("player-dialog");
+  if (!d.open) d.showModal();
+}
+
+function renderPlayer() {
+  if (!draft) return;
+  el("player-kinds").innerHTML = KINDS.map(([k, name, text]) =>
+    `<button type="button" class="kind ${draft.kind === k ? "on" : ""}" role="radio" aria-checked="${draft.kind === k}" data-kind="${k}">
+      <b>${esc(name)}</b><span>${esc(text)}</span></button>`).join("");
+  el("player-kinds").querySelectorAll("[data-kind]").forEach((b) => { b.onclick = () => { draft.kind = b.dataset.kind; renderPlayer(); }; });
+  let f = "";
+  const seg = (key, opts) => `<div class="seg" data-pkey="${key}" role="group">${opts.map(([v, t]) =>
+    `<button type="button" data-v="${v}" class="${draft[key] === v ? "on" : ""}" aria-pressed="${draft[key] === v}">${esc(t)}</button>`).join("")}</div>`;
+  if (["claude-code", "codex", "gemini-cli"].includes(draft.kind)) {
+    f = `<label class="field wide"><span class="flabel">Model</span>
+      <input data-pkey="model" value="${esc(draft.model)}" placeholder="blank: the agent's default" autocomplete="off" spellcheck="false">
+      <small>Whatever the agent's own model flag takes (${draft.kind === "codex" ? "codex -m" : draft.kind === "gemini-cli" ? "gemini -m" : "claude --model"}).</small></label>`;
+  } else if (draft.kind === "api") {
+    f = `<div class="field"><span class="flabel">Provider</span>${seg("provider", [["anthropic", "Anthropic"], ["openai", "OpenAI"], ["gemini", "Gemini"]])}</div>
+      <label class="field"><span class="flabel">Model</span>
+        <input data-pkey="model" value="${esc(draft.model)}" placeholder="${draft.provider === "anthropic" ? "blank: claude-opus-5-5" : "the model id"}" autocomplete="off" spellcheck="false">
+        <small>The provider's model id.</small></label>
+      <label class="field"><span class="flabel">Effort</span>
+        <input data-pkey="effort" value="${esc(draft.effort)}" placeholder="optional: low, medium, high" autocomplete="off" spellcheck="false">
+        <small>${draft.provider === "gemini" ? "Gemini's thinking level." : "Reasoning effort, passed through."}</small></label>`;
+  } else if (draft.kind === "house") {
+    f = `<div class="field wide"><span class="flabel">Strategy</span>${seg("strategy", [["tight", "Tight"], ["random", "Random"], ["call", "Calling station"]])}
+      <small>${esc(STRATEGY_TEXT[draft.strategy] || "")}</small></div>`;
+  }
+  el("player-fields").innerHTML = f;
+  el("player-fields").querySelectorAll("input[data-pkey]").forEach((i) => { i.oninput = () => { draft[i.dataset.pkey] = i.value.trim(); }; });
+  el("player-fields").querySelectorAll(".seg[data-pkey]").forEach((g) => g.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => { draft[g.dataset.pkey] = b.dataset.v; renderPlayer(); };
+  }));
+  const why = state && (state.seat_status || {})[draft.seat];
+  const ready = state && state.joined.includes(draft.seat);
+  el("player-status").textContent = ready ? `Ready now as ${(state.labels || {})[draft.seat] || "its player"}.` : why ? `Right now: ${why.message}` : "";
+}
+
+async function savePlayer() {
+  if (!draft) return;
+  const p = { kind: draft.kind };
+  if (draft.model) p.model = draft.model;
+  if (draft.kind === "api") { p.provider = draft.provider; if (draft.effort) p.effort = draft.effort; }
+  if (draft.kind === "house") p.strategy = draft.strategy;
+  el("player-note").textContent = "Saving…"; el("player-note").className = "note";
+  try {
+    const res = await fetch("/api/table/players", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ seat: draft.seat, player: p }) });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) { el("player-dialog").close(); poll(true); return; }
+    el("player-note").textContent = body.message || `The engine said ${res.status}.`; el("player-note").className = "note err";
+  } catch {
+    el("player-note").textContent = "Couldn't reach the engine."; el("player-note").className = "note err";
+  }
+}
+
+function setupPlayers() {
+  const d = el("player-dialog");
+  el("player-cancel").onclick = () => d.close();
+  el("player-save").onclick = savePlayer;
+  d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+  d.addEventListener("close", () => { draft = null; });
+  el("layer").addEventListener("click", (e) => {
+    const seat = e.target.closest("[data-seat]");
+    if (seat) openPlayer(seat.dataset.seat);
+  });
 }
 
 // ---- game settings: shown and changed on this page until the start --------------------
@@ -553,6 +688,12 @@ function renderSettings(force) {
   const lobby = s && s.status === "waiting_for_players";
   const canSet = Boolean(settings && lobby && s.start === "manual");
   if (!canSet && dialog.open) dialog.close();  // the game started (maybe from another tab)
+  if (!canSet && el("player-dialog").open) el("player-dialog").close();
+  if (draft && s) {  // keep the seat's live status fresh in the player dialog
+    const why = (s.seat_status || {})[draft.seat];
+    el("player-status").textContent = s.joined.includes(draft.seat)
+      ? `Ready now as ${(s.labels || {})[draft.seat] || "its player"}.` : why ? `Right now: ${why.message}` : "";
+  }
   // Once started, the header says what is being played.
   const game = el("game");
   game.hidden = !settings || lobby || !s;
@@ -633,6 +774,7 @@ async function poll(once) {
   if (!once) { clearTimeout(timer); timer = setTimeout(poll, 1000); }
 }
 setupForm();
+setupPlayers();
 setInterval(() => { if (showdown && showdown.until <= Date.now()) { showdown = null; render(); } }, 250);
 poll();
 </script>
