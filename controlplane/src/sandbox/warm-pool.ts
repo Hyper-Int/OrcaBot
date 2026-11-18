@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: warm-pool-v1-per-controlplane
-const MODULE_REVISION = 'warm-pool-v1-per-controlplane';
+// REVISION: warm-pool-v2-machine-controlplane-url
+const MODULE_REVISION = 'warm-pool-v2-machine-controlplane-url';
 console.log(`[warm-pool] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -24,6 +24,17 @@ export const DEFAULT_CONTROLPLANE_URL = 'https://api.orcabot.com';
 /** The control plane URL this control plane gives its VMs (CONTROLPLANE_URL in the VM). */
 export function sandboxControlplaneUrl(env: { FLY_SANDBOX_CONTROLPLANE_URL?: string }): string {
   return env.FLY_SANDBOX_CONTROLPLANE_URL || DEFAULT_CONTROLPLANE_URL;
+}
+
+/**
+ * The env that tells a new VM which control plane to talk to. Both names: the Fly app has
+ * CONTROLPLANE_URL as an app-wide secret (production's), and Fly secrets override a
+ * machine's own env, so CONTROLPLANE_URL alone never reached the VM. The sandbox prefers
+ * ORCABOT_CONTROLPLANE_URL (cpauth.ApplyMachineControlPlaneURL), which no secret shadows.
+ */
+export function machineControlplaneEnv(env: { FLY_SANDBOX_CONTROLPLANE_URL?: string }): Record<string, string> {
+  const url = sandboxControlplaneUrl(env);
+  return { CONTROLPLANE_URL: url, ORCABOT_CONTROLPLANE_URL: url };
 }
 
 /** WHERE clause (and its binds) for the warm machines that belong to `owner`. */

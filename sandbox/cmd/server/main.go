@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v49-shm-rmid-forced
+// REVISION: main-v50-machine-controlplane-url
 
 package main
 
@@ -42,7 +42,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v49-shm-rmid-forced"
+const mainRevision = "main-v50-machine-controlplane-url"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -204,6 +204,11 @@ func ensurePathFloor() {
 }
 
 func main() {
+	// The control plane that created this VM, not the Fly app-wide secret (see
+	// cpauth.MachineControlPlaneURLEnv). First, before anything reads CONTROLPLANE_URL.
+	// REVISION: main-v50-machine-controlplane-url
+	cpauth.ApplyMachineControlPlaneURL()
+
 	// Set umask 0002 so every child process — interactive shell, bash -c, or direct
 	// exec — creates group-writable files by default. Shell startup files (profile.d,
 	// bashrc) only run for interactive/login shells and are bypassed entirely for
