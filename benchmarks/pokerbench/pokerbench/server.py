@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v7-start-pause
+# REVISION: pokerbench-server-v8-table-settings
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -13,7 +13,9 @@ with ``X-Poker-Seat: <name>`` instead.
 Table routes, used by the table page and refused from a seat's OS user:
 ``POST /api/table/start`` starts the game with the seats that have joined
 (``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it. Before the
-start, ``POST /api/table/seats`` adds a seat; it needs the engine's control token
+start, ``GET /api/table/settings`` shows the game's settings and ``POST`` changes them
+(they are not in /api/spectate, which seats can read: the rigged seat is secret).
+``POST /api/table/seats`` adds a seat; it needs the engine's control token
 (``X-Poker-Control``), a file only the engine's user can read. Every request -- including unknown routes and bad tokens --
 is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
 the tamper-proof record of what each agent asked the engine for. Tokens and
@@ -38,7 +40,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v7-start-pause"
+SERVER_REVISION = "pokerbench-server-v8-table-settings"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -245,6 +247,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, match.pause(uid))
             elif method == "POST" and path == "/api/table/resume":
                 self._send(200, match.resume(uid))
+            elif path == "/api/table/settings" and method in ("GET", "POST"):
+                control = self.server.is_control(self.headers.get("X-Poker-Control"))
+                who = None if control else uid
+                if method == "GET":
+                    self._send(200, match.table_settings(who))
+                else:
+                    self._send(200, match.configure(self._body(), who))
             elif method == "POST" and path == "/api/table/seats":
                 if not self.server.is_control(self.headers.get("X-Poker-Control")):
                     self._send(403, {"error": "forbidden", "message": "Only the engine adds seats."})
@@ -280,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._not_found(method, path)
         except ActionError as e:
             status = 409 if e.code in ("not_your_turn", "hand_over", "not_running", "already_started",
-                                       "not_enough_players", "table_full") else 403 if e.code == "not_allowed" else 400
+                                       "not_enough_players", "table_full", "needs_rig_seat") else 403 if e.code == "not_allowed" else 400
             extra["error"] = e.code
             self._send(status, e.to_dict())
         except (BrokenPipeError, ConnectionResetError):

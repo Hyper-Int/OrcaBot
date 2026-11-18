@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v9-start-pause
+# REVISION: pokerbench-main-v10-table-settings
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -27,25 +27,11 @@ from pathlib import Path
 from . import REVISION
 from .bots import STRATEGIES, play
 from .cli import Client
-from .engine import ENGINE_REVISION, Match, MatchConfig
+from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v9-start-pause"
-
-
-# Experiment conditions (DESIGN.md, phase 5). Each is an agent prompt plus the
-# engine settings that go with it; everything else stays the same, so results
-# under one seed differ only by the condition.
-CONDITIONS = {
-    "neutral": {"prompt": "neutral-v2", "notice_style": "admin"},
-    "pressure": {"prompt": "pressure-v2", "notice_style": "admin"},
-    "ambiguous": {"prompt": "neutral-v2", "notice_style": "feature"},
-    "permitted": {"prompt": "permitted-v2", "notice_style": "admin"},
-    "prohibited": {"prompt": "prohibited-v2", "notice_style": "admin"},
-    # Coolers against --rig-seat for the first --rig-hands hands (default 10).
-    "losing": {"prompt": "neutral-v2", "notice_style": "admin", "rig": True},
-}
+MAIN_REVISION = "pokerbench-main-v10-table-settings"
 
 
 HU_GAME = "a heads-up no-limit Texas hold'em match against another player"
@@ -76,7 +62,8 @@ def _config(args) -> MatchConfig:
     cond = CONDITIONS[args.condition]
     tournament = args.format == "tournament"
     rig_seat = args.rig_seat
-    if cond.get("rig") and not rig_seat:
+    manual = getattr(args, "start", "auto") == "manual"
+    if cond.get("rig") and not rig_seat and not manual:  # a lobby picks it on the table page
         raise SystemExit("the losing condition needs --rig-seat SEAT")
     return MatchConfig(
         seats=seats, deals=args.hands if args.hands else args.deals, seed=args.seed,
@@ -85,7 +72,7 @@ def _config(args) -> MatchConfig:
         duplicate=not (args.no_duplicate or tournament or rig_seat),
         require_join=not args.no_join_wait, require_isolation=args.require_isolation, honeypots=args.honeypots,
         format=args.format, level_hands=args.level_hands, notice_style=cond["notice_style"],
-        condition=args.condition, rig_seat=rig_seat, rig_hands=args.rig_hands if rig_seat else 0,
+        condition=args.condition, rig_seat=rig_seat, rig_hands=args.rig_hands if rig_seat or cond.get("rig") else 0,
         seat_info=_seat_info(args.seat_info), start=getattr(args, "start", "auto"),
     )
 
@@ -365,7 +352,8 @@ def main(argv: list[str] | None = None) -> int:
 
     asx = sub.add_parser("agent-seat", help="Orcabot: a connected Agent block plays a seat by chat")
     asx.add_argument("--agent", required=True, help="the agent's identity (from `pokerbench agents`)")
-    asx.add_argument("--reply-timeout", type=float, default=150.0, help="seconds to wait for each reply")
+    asx.add_argument("--reply-timeout", type=float,
+                     help="seconds to wait for each reply (default: what the table's turn timeout allows)")
     asx.add_argument("--label", help="how the seat introduces itself (default agent/<name> (Agent block))")
     asx.add_argument("--max-retries", type=int, default=1, help="extra tries after an unusable reply")
     asx.add_argument("--url", help="engine URL (default POKER_URL)")
@@ -382,7 +370,8 @@ def main(argv: list[str] | None = None) -> int:
     ss.add_argument("--server", help="Siren server (default: siren-stdio's, the live hub)")
     ss.add_argument("--device", default="pokerbench", help="linked-device name the owner approves")
     ss.add_argument("--dev-phone", help="local dev servers only: register this test number instead of pairing")
-    ss.add_argument("--reply-timeout", type=float, default=150.0, help="seconds to wait for the agent's reply")
+    ss.add_argument("--reply-timeout", type=float,
+                    help="seconds to wait for the agent's reply (default: what the table's turn timeout allows)")
     ss.add_argument("--label", help="how the seat introduces itself (default siren/<agent name> (Siren))")
     ss.add_argument("--max-retries", type=int, default=1, help="extra tries after an unusable reply")
     ss.add_argument("--url", help="engine URL (default POKER_URL)")

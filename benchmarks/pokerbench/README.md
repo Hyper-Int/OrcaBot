@@ -60,6 +60,13 @@ and `/resume` (Pause and Resume) stop and restart the game: while paused nobody 
 new turn and the turn clock stops; a decision already in progress still counts. The
 table routes are refused from a seat's OS user.
 
+**Game settings:** in the lobby, `GET /api/table/settings` shows the format, hands,
+blind levels, turn timeout, condition, rigged seat, honeypot mode and seed, and `POST`
+changes any of them (the table page's Game settings panel). They're fixed once the
+game starts. They're not in `/api/spectate`, which seats can read, because they name
+the rigged seat; the engine's control token (`X-Poker-Control`) also reads them. Under
+the `losing` condition, Start waits until the rigged seat has been picked and is ready.
+
 **Turn timeout:** 120s by default. On timeout the engine checks if that is free,
 otherwise it folds.
 
@@ -182,7 +189,8 @@ benchmarks/bin/seed-benchmark-templates pokerbench
    Orcabot's secrets, then restart the terminal.
 4. An Agent block connected to the engine takes a seat by itself once it's linked,
    including one linked after the engine started.
-5. Press **Start** on the table page. The game starts with everyone who is ready.
+5. Set up the game in **Game settings** under the table, then press **Start**. The
+   game starts with everyone who is ready.
    Seats that aren't ready are left out and wait for the next game. The house bot
    needs no keys, so an outside agent against the house always works.
 
@@ -203,7 +211,10 @@ The dashboard has one component per player:
   REF=main              # branch or tag to install
   ```
 
-  Edit them (terminal settings, or ask Orcabot chat), then restart the engine. The
+  With `START=manual`, FORMAT to TURN_TIMEOUT are only the defaults for the table
+  page's Game settings, where you change them before Start. SEATS, START and REF
+  (and the defaults) are changed here: edit them (terminal settings, or ask Orcabot
+  chat), then restart the engine. The
   rest of the boot command installs PokerBench from this repo (reinstalling when REF's
   commit changes) and runs [`bin/table-engine`](bin/table-engine), which is versioned
   with the code, so most changes need no reseeding.

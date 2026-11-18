@@ -2,10 +2,12 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v5-start-pause
+# REVISION: pokerbench-table-engine-v6-table-settings
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
-# $PRIV and then runs this script with those settings in the environment:
+# $PRIV and then runs this script with those settings in the environment. With
+# START=manual they are the defaults: the table page can change the game settings
+# (FORMAT through TURN_TIMEOUT) until someone presses Start.
 #
 #   FORMAT       tournament | cash
 #   HANDS        tournament: hand limit; cash: deals (each replayed once per seat)
@@ -31,7 +33,7 @@
 # says when the game has started (POKER_STARTED=1; POKER_SEATS is then final).
 set -u
 START="${START:-manual}"
-REVISION=pokerbench-table-engine-v5-start-pause
+REVISION=pokerbench-table-engine-v6-table-settings
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench/pokerbench"
@@ -57,7 +59,17 @@ DUP=$(printf '%s\n' "${SEATS[@]}" | sort | uniq -d | head -1); [ -z "$DUP" ] || 
 join() { local IFS="$1"; shift; echo "$*"; }
 # One field of the engine's public state (/api/spectate), or "" if it's not up.
 spectate() { curl -sf "http://127.0.0.1:$PORT/api/spectate" | "$VENV/bin/python" -c "$1" 2>/dev/null; }
-render_prompt() { "$PB" prompt --condition "$CONDITION" --players "$(( $1 < 2 ? 2 : $1 ))" --format "$FORMAT"; }
+render_prompt() {  # players [condition format]
+  "$PB" prompt --condition "${2:-$CONDITION}" --players "$(( $1 < 2 ? 2 : $1 ))" --format "${3:-$FORMAT}"
+}
+# The game's settings as the table page left them (needs the control token: they say
+# which seat is rigged, so seats can't read them).
+settings() {
+  curl -sf -H "X-Poker-Control: $(cat "$PRIV/control.token")" "http://127.0.0.1:$PORT/api/table/settings" \
+    | "$VENV/bin/python" -c "$1" 2>/dev/null
+}
+SUMMARY='import json,sys; d=json.load(sys.stdin); print("%s, %d hands%s, condition %s%s, honeypots %s, %gs per decision, seed %d" % (d["format"], d["hands"], ", blinds up every %d" % d["level_hands"] if d["format"] == "tournament" else "", d["condition"], " (a seat is rigged)" if d["rig_seat"] else "", d["honeypots"], d["turn_timeout"], d["seed"]))'
+
 write_env() {  # started (0|1), seats...
   local started=$1; shift
   { printf 'POKER_URL=http://127.0.0.1:%s\n' "$PORT"
@@ -92,7 +104,12 @@ ARGS=(--seats "$(join , "${SEATS[@]}")" --format "$FORMAT"
 if [ "$FORMAT" = tournament ]; then ARGS+=(--hands "$HANDS" --level-hands "$LEVEL_HANDS"); else ARGS+=(--deals "$HANDS"); fi
 [ -n "${RIG_SEAT:-}" ] && ARGS+=(--rig-seat "$RIG_SEAT")
 
-echo "== PokerBench: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS =="
+if [ "$START" = manual ]; then
+  echo "== PokerBench table. Defaults: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS"
+  echo "   (change them on the table page before you press Start)"
+else
+  echo "== PokerBench: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS =="
+fi
 echo "   seats: ${SEATS[*]:-(none yet)}"
 "$PB" serve "${ARGS[@]}" &
 ENGINE=$!
@@ -107,8 +124,7 @@ start_agent_seat() {  # seat identity
   local seat=$1 identity=$2
   until [ -s "$PRIV/tokens/$seat.token" ]; do sleep 1; done
   ( "$PB" agent-seat --agent "$identity" --seat "$seat" --token-file "$PRIV/tokens/$seat.token" \
-      --url "http://127.0.0.1:$PORT" --reply-timeout $(( TURN_TIMEOUT > 40 ? TURN_TIMEOUT - 15 : TURN_TIMEOUT - 5 )) \
-      --log "$RUN/$seat.calls.jsonl" < /dev/null 2>&1 | sed -u "s/^/[$seat] /" ) &
+      --url "http://127.0.0.1:$PORT" --log "$RUN/$seat.calls.jsonl" < /dev/null 2>&1 | sed -u "s/^/[$seat] /" ) &
   PIDS+=($!)
   echo "   agent seat $seat: $identity"
 }
@@ -118,14 +134,14 @@ STATUS='import json,sys; print(json.load(sys.stdin)["status"])'
 if [ "$START" = manual ]; then
   echo
   echo "Open the table (the browser block, http://localhost:$PORT/). Each seat checks in"
-  echo "when it's ready; press Start there to play with the players at the table. Pause and"
-  echo "Resume are on the table page too."
+  echo "when it's ready. Set up the game there, then press Start to play with the players"
+  echo "at the table. Pause and Resume are on the table page too."
 else
   echo "The game starts when every seat has checked in. Table: http://localhost:$PORT/"
 fi
 
 # The lobby: until the game starts, seat Agent blocks linked or connected since.
-shown=
+shown=; shown_settings=$(settings "$SUMMARY")
 while [ "$(spectate "$STATUS")" = waiting_for_players ]; do
   while read -r seat identity; do
     [ -n "$seat" ] || continue
@@ -138,18 +154,23 @@ while [ "$(spectate "$STATUS")" = waiting_for_players ]; do
   ready=$(spectate 'import json,sys; d=json.load(sys.stdin); print(", ".join(d["joined"]) or "nobody yet")')
   [ "$ready" = "$shown" ] || echo "   ready: $ready"
   shown=$ready
+  now=$(settings "$SUMMARY")
+  [ -z "$now" ] || [ "$now" = "$shown_settings" ] || { echo "   settings: $now"; shown_settings=$now; }
   kill -0 $ENGINE 2>/dev/null || break
   sleep 3
 done
 
-# Started: the seats are final. Render the prompt for this table size, then tell the seats.
+# Started: the seats and settings are final. Render the prompt for this table size and
+# the condition chosen on the table page, then tell the seats.
 FINAL=$(spectate 'import json,sys; print(" ".join(json.load(sys.stdin)["seats"]))')
 if [ -n "$FINAL" ]; then
   read -r -a FINAL_SEATS <<<"$FINAL"
-  render_prompt "${#FINAL_SEATS[@]}" > "$PUB/prompt.txt.new" && chmod 644 "$PUB/prompt.txt.new" \
+  read -r COND FMT <<<"$(settings 'import json,sys; d=json.load(sys.stdin); print(d["condition"], d["format"])')"
+  render_prompt "${#FINAL_SEATS[@]}" "${COND:-}" "${FMT:-}" > "$PUB/prompt.txt.new" && chmod 644 "$PUB/prompt.txt.new" \
     && mv -f "$PUB/prompt.txt.new" "$PUB/prompt.txt"
   write_env 1 "${FINAL_SEATS[@]}"
   echo "== Started: ${FINAL_SEATS[*]}"
+  echo "   $(settings "$SUMMARY")"
 fi
 
 wait $ENGINE
