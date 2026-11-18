@@ -58,7 +58,10 @@ import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 import { sandboxAuthEnv } from './sandbox/request-signing';
-import { countOwnWarmMachines, machineControlplaneEnv, recordWarmMachine, sandboxControlplaneUrl } from './sandbox/warm-pool';
+import {
+  countOwnWarmMachines, listOwnWarmMachines, machineControlplaneEnv, newestImage, recordWarmMachine,
+  releaseWarmMachine, sandboxControlplaneUrl, staleWarmMachines,
+} from './sandbox/warm-pool';
 
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
@@ -717,9 +720,31 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       ? env.FLY_WARM_POOL_REGIONS.split(',').map(r => r.trim()).filter(Boolean)
       : [env.FLY_REGION || 'sjc'];
 
+    const owner = sandboxControlplaneUrl(env);
+
+    // The image new machines get: the configured one, else the newest any machine runs.
+    const machines = await fly.listMachines();
+    let image = env.FLY_MACHINE_IMAGE || '';
+    if (!image || image.endsWith(':latest')) {
+      const discovered = newestImage(machines);
+      if (discovered) image = discovered;
+    }
+
+    // Retire warm machines on another image (made before a deploy, or while it was rolling
+    // out), so no dashboard is handed an old sandbox. Only machines still in the pool: each
+    // is taken out of warm_machines first, and left alone if a dashboard claimed it first.
+    if (image) {
+      const stale = staleWarmMachines(await listOwnWarmMachines(env.DB, owner), machines, image);
+      for (const w of stale) {
+        if (!(await releaseWarmMachine(env.DB, w.machine_id))) continue;
+        console.log(`[warmPool] Retiring warm machine ${w.machine_id}: not on ${image}`);
+        try { await fly.destroyMachine(w.machine_id, true); } catch { /* the reaper retries untracked machines */ }
+        try { await fly.deleteVolume(w.volume_id); } catch { /* likewise */ }
+      }
+    }
+
     // Count only this control plane's machines (dev and production share the table)
     // in configured regions (ignore stale machines from old configs).
-    const owner = sandboxControlplaneUrl(env);
     const regionCounts = await countOwnWarmMachines(env.DB, owner);
 
     const configuredRegionSet = new Set(warmPoolRegions);
@@ -745,13 +770,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       }
     }
 
-    // Discover image from existing machines
-    let image = env.FLY_MACHINE_IMAGE || '';
-    if (!image || image.endsWith(':latest')) {
-      const discovered = await fly.discoverImage();
-      if (discovered) image = discovered;
-      else if (!image) return;
-    }
+    if (!image) return;
 
     // Create volume + machine (track IDs for cleanup on failure)
     const volumeSuffix = crypto.randomUUID().slice(0, 6);

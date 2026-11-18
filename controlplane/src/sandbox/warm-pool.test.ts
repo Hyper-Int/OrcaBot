@@ -6,11 +6,40 @@ import {
   DEFAULT_CONTROLPLANE_URL,
   machineControlplaneEnv,
   countOwnWarmMachines,
+  listOwnWarmMachines,
   migrateWarmMachinesOwner,
+  newestImage,
   pickOwnWarmMachine,
   recordWarmMachine,
+  releaseWarmMachine,
   sandboxControlplaneUrl,
+  staleWarmMachines,
 } from './warm-pool';
+
+const OLD = 'registry.fly.io/orcabot-sandbox:deployment-01M7Q9YQKK8QCYWXT2NW3SKBA3';
+const NEW = 'registry.fly.io/orcabot-sandbox:deployment-01M7QFXN917MVJ0VWQEGS86MFZ';
+
+describe('warm pool images', () => {
+  it('the newest image is the latest deploy', () => {
+    expect(newestImage([{ config: { image: OLD } }, { config: { image: NEW } }, { config: {} }, {}])).toBe(NEW);
+    expect(newestImage([])).toBeUndefined();
+  });
+
+  it('only pool machines on another image are stale', () => {
+    const pool = [
+      { machine_id: 'warm-old', volume_id: 'v1' },
+      { machine_id: 'warm-new', volume_id: 'v2' },
+      { machine_id: 'warm-gone', volume_id: 'v3' }, // Fly doesn't list it any more
+    ];
+    const machines = [
+      { id: 'warm-old', config: { image: OLD } },
+      { id: 'warm-new', config: { image: NEW } },
+      { id: 'dashboard-vm', config: { image: OLD } }, // in use, not in the pool: never stale here
+    ];
+    expect(staleWarmMachines(pool, machines, NEW).map((w) => w.machine_id)).toEqual(['warm-old']);
+    expect(staleWarmMachines(pool, machines, '')).toEqual([]);
+  });
+});
 
 const DEV = 'https://api.dev.orcabot.com';
 
@@ -93,6 +122,19 @@ describe('warm pool per control plane', () => {
     await recordWarmMachine(db, DEFAULT_CONTROLPLANE_URL, 'prod-1', 'v3', 'sjc');
     expect(await countOwnWarmMachines(db, DEV)).toEqual([{ region: 'sjc', cnt: 2 }]);
     expect(await countOwnWarmMachines(db, DEFAULT_CONTROLPLANE_URL)).toEqual([{ region: 'sjc', cnt: 2 }]); // prod-1 + legacy-1
+  });
+
+  it('retiring a machine never takes one a dashboard already claimed', async () => {
+    await recordWarmMachine(db, DEV, 'dev-1', 'v1', 'sjc');
+    expect((await listOwnWarmMachines(db, DEV)).map((w) => w.machine_id)).toEqual(['dev-1']);
+    // A dashboard claims it (the claim deletes the same row)...
+    raw.exec(`DELETE FROM warm_machines WHERE machine_id = 'dev-1'`);
+    // ...so retiring it now must report "not mine to destroy".
+    expect(await releaseWarmMachine(db, 'dev-1')).toBe(false);
+
+    await recordWarmMachine(db, DEV, 'dev-2', 'v2', 'sjc');
+    expect(await releaseWarmMachine(db, 'dev-2')).toBe(true);
+    expect(await listOwnWarmMachines(db, DEV)).toEqual([]);
   });
 
   it('the owner is the URL the VM is given', () => {
