@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+import { migrateWarmMachinesOwner } from '../sandbox/warm-pool';
+
 /**
  * Database Schema
  *
@@ -1607,6 +1609,8 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `).run();
+  // Which control plane each warm machine reports to (dev and production share this table).
+  await migrateWarmMachinesOwner(db);
 
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);

@@ -57,6 +57,7 @@ import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 import { sandboxAuthEnv } from './sandbox/request-signing';
+import { countOwnWarmMachines, recordWarmMachine, sandboxControlplaneUrl } from './sandbox/warm-pool';
 
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
@@ -715,15 +716,15 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       ? env.FLY_WARM_POOL_REGIONS.split(',').map(r => r.trim()).filter(Boolean)
       : [env.FLY_REGION || 'sjc'];
 
-    // Count only machines in configured regions (ignore stale machines from old configs)
-    const regionCounts = await env.DB.prepare(
-      `SELECT region, COUNT(*) as cnt FROM warm_machines GROUP BY region`
-    ).all<{ region: string; cnt: number }>();
+    // Count only this control plane's machines (dev and production share the table)
+    // in configured regions (ignore stale machines from old configs).
+    const owner = sandboxControlplaneUrl(env);
+    const regionCounts = await countOwnWarmMachines(env.DB, owner);
 
     const configuredRegionSet = new Set(warmPoolRegions);
     const countByRegion: Record<string, number> = {};
     let configuredCount = 0;
-    for (const row of regionCounts.results || []) {
+    for (const row of regionCounts) {
       countByRegion[row.region] = row.cnt;
       if (configuredRegionSet.has(row.region)) {
         configuredCount += row.cnt;
@@ -777,7 +778,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         autostop: 'off',
         env: {
           ...(await sandboxAuthEnv(env)),
-          CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
+          CONTROLPLANE_URL: owner,
           ...sandboxInternalTokenEnv(env),
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
           ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),
@@ -788,9 +789,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       machineId = machine.id;
       await fly.waitForState(machine.id, 'started', 90);
 
-      await env.DB.prepare(`
-        INSERT INTO warm_machines (machine_id, volume_id, region) VALUES (?, ?, ?)
-      `).bind(machine.id, volume.id, region).run();
+      await recordWarmMachine(env.DB, owner, machine.id, volume.id, region);
 
       console.log(`[warmPool] Replenished pool in ${region} (${configuredCount + 1}/${WARM_POOL_TARGET})`);
     } catch (innerErr) {
