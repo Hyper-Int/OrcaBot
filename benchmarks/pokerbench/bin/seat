@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v3-rendered-screen
+# REVISION: pokerbench-seat-v4-light
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -31,7 +31,7 @@
 # see links for (an older sandbox).
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v3-rendered-screen
+REVISION=pokerbench-seat-v4-light
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -40,12 +40,15 @@ engine_up() {
 }
 
 # Which seat this terminal plays: the engine maps linked terminals to seats.
+# (No python here: it runs every few seconds. seats.json is one "key": "value" per line.)
 my_seat() {
-  python3 -c 'import json,os,sys
-d=json.load(open(sys.argv[1]))
-s=d.get("by_pty",{}).get(os.environ.get("ORCABOT_PTY_ID",""))
-if not s and os.environ.get("SEAT","") in d.get("static",[]): s=os.environ["SEAT"]
-print(s or "")' "$PUB/seats.json" 2>/dev/null
+  local s=
+  [ -n "${ORCABOT_PTY_ID:-}" ] && s=$(sed -n "s/^ *\"${ORCABOT_PTY_ID}\": \"\([^\"]*\)\".*/\1/p" "$PUB/seats.json" 2>/dev/null | head -1)
+  if [ -z "$s" ] && [ -n "${SEAT:-}" ]; then  # a seat from SEATS (no links)
+    s=$(python3 -c 'import json,os,sys
+d=json.load(open(sys.argv[1])); print(os.environ["SEAT"] if os.environ["SEAT"] in d.get("static",[]) else "")' "$PUB/seats.json" 2>/dev/null)
+  fi
+  echo "$s"
 }
 
 api() {  # method path [json body]: as this seat (its token if readable, else by OS user)
@@ -71,8 +74,12 @@ v={"P_KIND":kind,"P_MODEL":p.get("model",""),"P_PROVIDER":p.get("provider",""),"
 print(" ".join("%s=%s"%(k,shlex.quote(str(x))) for k,x in v.items()))' "$out" 2>/dev/null
 }
 
-report() {  # state message: why this seat can't play yet (the table page shows it)
+reported= reported_at=0
+report() {  # state message: why this seat can't play yet (the table page shows it); again only if it changed, or every 30s
+  local now; now=$(date +%s)
+  [ "$1:$2" = "$reported" ] && [ "$now" -lt $((reported_at + 30)) ] && return 0
   api POST /api/seat/status "$(python3 -c 'import json,sys; print(json.dumps({"state":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2")" >/dev/null
+  reported="$1:$2"; reported_at=$now
 }
 
 # Can this player play here? Sets NEED (empty if it can), HOWTO and KEY. Orcabot's secrets
@@ -125,8 +132,9 @@ own() {  # method path [json]
 # terminal's raw recent output (Orcabot /screen, with its size), rendered as the screen
 # shows it now (seat_screen.py), since an agent's interface redraws in place and an
 # answered question stays in the output. Empty if none, or if this Orcabot can't say.
-waiting_on() {
-  local hdr body rows cols
+screen_sum= WAIT_Q=
+waiting_on() {  # sets WAIT_Q
+  local hdr body rows cols sum
   hdr=$(mktemp) body=$(mktemp)
   if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
     curl -s --max-time 15 -D "$hdr" -o "$body" "$POKER_OWN_URL/screen"
@@ -138,7 +146,13 @@ waiting_on() {
   fi
   if head -1 "$hdr" | grep -q " 200"; then
     rows=$(grep -i '^x-screen-rows:' "$hdr" | tr -dc 0-9); cols=$(grep -i '^x-screen-cols:' "$hdr" | tr -dc 0-9)
-    python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" < "$body" 2>/dev/null
+    sum="$(cksum < "$body") $rows $cols"
+    if [ "$sum" != "$screen_sum" ]; then  # render only when the screen has changed
+      WAIT_Q=$(python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" < "$body" 2>/dev/null)
+      screen_sum=$sum
+    fi
+  else
+    WAIT_Q=
   fi
   rm -f "$hdr" "$body"
 }
@@ -172,7 +186,7 @@ print(json.dumps(p))')
 if [ "$MODE" = helper ]; then
   exec >>"${TMPDIR:-/tmp}/pokerbench-seat-$(id -u)-${ORCABOT_PTY_ID:-local}.log" 2>&1
   echo "[seat] REVISION: $REVISION helper ($PLAYER) loaded at $(date -u +%FT%TZ)"
-  ready_at=; ready_game=; given=; given_any=
+  ready_at=; ready_game=; given=; given_any=; recheck_at=0
   while :; do
     until engine_up; do sleep 3; done
     SEAT=$(my_seat)
@@ -181,20 +195,22 @@ if [ "$MODE" = helper ]; then
     if [ "$POKER_STARTED" = 1 ]; then
       if [ "$given" != "$POKER_GAME" ] && [ "$ready_game" = "$POKER_GAME" ]; then
         case " $POKER_SEATS " in *" $SEAT "*)
-          q=$(waiting_on)
-          if [ -n "$q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$q\""; sleep 3; continue; fi
+          waiting_on
+          if [ -n "$WAIT_Q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$WAIT_Q\""; sleep 3; continue; fi
           echo "$(date -u +%T) game $POKER_GAME started: giving the agent its prompt"
           type_in "$PUB/prompt.txt" ${given_any:+"$CLEAR"} && given=$POKER_GAME && given_any=1 ;;
         esac
       fi
-      sleep 3; continue
+      sleep 2; continue
     fi
+    # Ready for this game: just watch for Start (cheap), and check again every 20s.
+    if [ "$ready_at" = "$POKER_GAME:$SEAT" ] && [ "$(date +%s)" -lt "$recheck_at" ]; then sleep 2; continue; fi
     P_STATUS=; eval "$(setup)" 2>/dev/null
     [ -n "$P_STATUS" ] || { sleep 3; continue; }
     check
     if [ -z "$NEED" ]; then
-      q=$(waiting_on)
-      [ -n "$q" ] && NEED="$P_LABEL is waiting for you in its terminal (\"$q\")"
+      waiting_on
+      [ -n "$WAIT_Q" ] && NEED="$P_LABEL is waiting for you in its terminal (\"$WAIT_Q\")"
     elif [ -n "$KEY" ]; then
       NEED="$NEED: log in in its terminal, or add $KEY in Orcabot's secrets and restart it"
     fi
@@ -208,7 +224,8 @@ if [ "$MODE" = helper ]; then
       ready_at="$POKER_GAME:$SEAT"; ready_game=$POKER_GAME
       echo "$(date -u +%T) seat $SEAT ready as $P_LABEL"
     fi
-    sleep 3
+    recheck_at=$(( $(date +%s) + 20 ))
+    sleep 2
   done
 fi
 
@@ -233,6 +250,9 @@ while :; do
     say_once "Game $POKER_GAME started without this seat. Waiting for the next game..."
     sleep 3; continue
   fi
+  # Ready: watch for Start every 2s, ask about a switch on the table page every 6s.
+  if [ "${ready_game:-}" = "$POKER_GAME" ] && [ "$(date +%s)" -lt "${recheck_at:-0}" ]; then sleep 2; continue; fi
+  recheck_at=$(( $(date +%s) + 6 ))
   P_STATUS=; eval "$(setup)" 2>/dev/null
   if [ -z "$P_STATUS" ]; then sleep 3; continue; fi  # not seated yet: the engine is catching up
   if [ "$P_REV:$POKER_GAME:$SEAT" != "$ready_at" ]; then
