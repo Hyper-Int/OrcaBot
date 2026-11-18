@@ -258,7 +258,7 @@ Three kinds of player, each its own component on the canvas, around one table:
 |---|---|---|---|
 | **Agent** (Claude Code, Codex, Gemini CLI) | the harness, with a shell | agent seat terminal | the `poker` CLI, or tools it writes |
 | **Model** (direct API, no harness) | `pokerbench llm-seat` | model seat terminal with a live feed | built in (structured output) |
-| **Persona** (a Siren agent: Grok Bot, Muse, Dots, …) | `pokerbench siren-seat` + `siren-stdio` (MLS) | Siren agent seat terminal | chat: one message per turn, JSON reply |
+| **Persona** (an outside agent: Grok Bot, Muse, Dots, …) | `pokerbench agent-seat` via the sandbox's agent API | **Agent block** connected to the engine terminal | chat: one message per turn, JSON reply |
 
 **Built (template level, no platform changes).** The engine terminal runs the table
 from one `SEATS` list; every seat terminal waits until its `SEAT=` is listed, then
@@ -266,41 +266,27 @@ plays. Seats introduce themselves when they join (`X-Poker-Seat-Info`), so the t
 and report know who is in each seat without the engine being told. Adding a player is
 duplicating a seat terminal and adding its name to SEATS.
 
-**Next: seating by drawing an edge.** What the platform has today (surveyed in the
-monorepo, Nov 2026):
-- Edges are plain rows (`dashboard_edges`: source, target, handles). Nothing
-  server-side runs when one is drawn; the only edge hooks are browser-side
-  (`handleIntegrationEdge`, `ConnectionDataFlowContext`), so they need an open tab.
-- The sandbox never sees edges, only `terminal_integrations` rows.
-- A PTY knows its session, PTY and dashboard ids, not its canvas item id.
-- `list_items` (dashboard MCP) returns items and edges, but from the Durable Object's
-  copy, which misses items and edges created by templates (DO `/init` is never called).
+**Built: Agent blocks, seated by an edge.** An `agent` block type (frontend
+`AgentBlock`, control plane `src/agents/`, sandbox `internal/agentlink`): the user links
+an outside agent with a pairing code, and a terminal can use only the agents its item
+has an edge to. The control plane answers that from D1 edges (not the browser, so it
+works with no tab open and for template dashboards), and the sandbox serves the
+terminal over its privileged socket (UID-identified) or MCPLocal (per-PTY secret).
+PokerBench seats every Agent block connected to the engine terminal.
 
-The plan:
+**Still to do for every player kind:**
 1. **`ORCABOT_ITEM_ID` in every PTY's environment**, so a terminal knows which
-   component it is. Seat names then default to the component's name, and `SEAT=`
-   lines go away.
-2. **A server-side edge branch** in `createEdge`/`deleteEdge` (controlplane) for
-   player → table edges, writing a `table_seats` row (dashboard, table item, player
-   item, seat name, order). Server-side, so seating works with no tab open, and from
-   templates.
-3. **A sandbox → control plane route** `GET /internal/dashboards/:id/tables/:item/seats`
-   for the engine, authorised with the VM's dashboard-scoped token through
-   `authorizeSandboxForDashboard` (never `requireInternalAuth`). The engine reads its
-   seats from it at the start of each game instead of `SEATS`. Disconnecting an edge
-   drops the player at the next game.
-4. **Table and player blocks.** A `table` block type (the engine plus the spectator
-   view in one component), and model and persona blocks that are terminal sessions
-   underneath (same PTY machinery, broker keys and per-UID isolation) but render a
-   decision feed instead of xterm. A persona block shows the Siren pairing code as a
-   link/QR in the block. Adding a block type touches `VALID_ITEM_TYPES`
-   (`controlplane/src/index.ts`), `DASHBOARD_ITEM_TYPES` and its migration
-   (`schema.ts`), `types.ts`, and a component in `frontend/src/components/blocks/`.
-5. **A generic seat protocol.** The engine's seat API (`state`, `wait`, `act`,
-   `history`, identity by OS user) is not poker-specific in shape. Player blocks
-   that speak it can sit at any turn-based table (the chess e2e scenario is the next
-   candidate), which is what makes models and personas first-class players rather
-   than PokerBench features.
+   component it is; seat names could then default to component names and `SEAT=`
+   lines go away. The sandbox doesn't know a terminal's item today (the control plane
+   would pass it at session creation).
+2. **Model and agent seat terminals seated by edge too**, using the same edge query
+   the Agent blocks use (`/internal/dashboards/:id/terminals/:ptyId/agents`
+   generalised to "players connected to this table").
+3. **A table block** (the engine plus the spectator view in one component), and model
+   blocks that render a decision feed instead of xterm.
+4. **A generic seat protocol**: the engine's seat API (`state`, `wait`, `act`,
+   `history`, identity by OS user) is not poker-specific in shape, so players that
+   speak it can sit at any turn-based table.
 
 Isolation stays as it is: each seat binds to the OS user of its loopback connection,
 so a seat component can only ever play its own seat, edge or no edge.

@@ -194,10 +194,11 @@ The dashboard has one component per player:
   shows a live feed: each situation, then the model's action, reason, latency and
   tokens. Its call log stays in the seat's home until the game ends, then goes to
   `results/<game>/seats/`, so no other seat can read its reasoning mid-game.
-- a **Siren agent seat** terminal (not in SEATS by default): an agent from the Siren
-  hub plays by chat (see [Siren agent seats](#siren-agent-seats-agents-that-live-in-a-messaging-hub)).
-  Set `AGENT=` to its Siren identity and add `siren` to SEATS; the first time, its
-  owner approves the seat on their iPhone.
+- an **Agent** block, connected to the engine terminal: an outside AI agent (Grok Bot,
+  Muse, Dots, Claude Code, Codex, ...) running on its own computer. The block shows what
+  to paste into the agent, and the user types the pairing code the agent sends back.
+  Every linked Agent block connected to the engine terminal is seated at the next game,
+  named after the agent (see [Agent blocks](#agent-blocks-outside-agents-as-players)).
 - a **spectator** browser block, which shows who plays each seat.
 
 Adding a player is duplicating a seat terminal, giving it a new `SEAT=` and adding the
@@ -262,49 +263,39 @@ pokerbench llm-seat --provider gemini --model gemini-3.8-flash ...
 Direct seats can't reach the honeypot, since there's no shell. They are the skill
 baseline and the control group; agent seats are the integrity experiment.
 
-### Siren agent seats (agents that live in a messaging hub)
+### Agent blocks: outside agents as players
 
-[Siren](https://github.com/robdmac/Siren) is a messaging hub that outside agents
-connect to (Grok Bot, Muse, Dots, Claude Code with the Siren plugin). `pokerbench
-siren-seat` seats one of them: each turn is a chat message to the agent, and its
-reply is its move.
+An **Agent block** is an Orcabot canvas component for an AI agent that lives on its
+own computer (Grok Bot, Muse, Dots, Claude Code, Codex, ...). Connect one to the
+engine terminal and it takes a seat.
 
-```
-pokerbench siren-seat --agent "+447700900001/agent:grok" --state ~/.pokerbench-siren/state \
-    --siren-bin path/to/siren-stdio --token-file T --reply-timeout 150 --log calls.jsonl
-```
+- **Linking:** the block shows what to paste into the chosen agent. The agent sets up
+  a small connector and sends back an 8-character pairing code; the user types it into
+  the block. No other app or phone is involved: Orcabot's control plane holds an owner
+  identity on the agent hub for each user (server to server) and approves the code.
+- **Seating:** `table-engine` runs `pokerbench agents` in the engine terminal, which
+  lists the Agent blocks connected to it (the sandbox asks the control plane, from the
+  canvas edges), adds each to SEATS under the agent's name, and runs `pokerbench
+  agent-seat` for it. Its decisions appear in the engine terminal, prefixed `[name]`.
+- **Each turn** is one chat message (intro the first time, then the hands since the
+  agent's last turn, then the current hand); the reply's one-line JSON (found anywhere
+  in it, or an `ACTION:` line) is its move, through the same loop as direct model seats
+  (`pokerbench/chatseat.py`).
+- **Transport:** the seat talks to the sandbox's local agent API (Unix socket in pool
+  mode, identified by its UID; otherwise TCP with the terminal's MCP secret), which only
+  serves agents *that terminal* is connected to. The dashboard's VM is a linked device
+  of its owner: messages are end-to-end encrypted between it and the agent, and to the
+  agent it is its owner, so they wake it. The engine never holds keys.
+- **Timing:** outside agents answer in seconds (Grok, webhook) to a minute or two
+  (Muse, Dots, which poll). Raise TURN_TIMEOUT (300 or more) when seating one.
+- **Verified:** the link end to end with no phone (an Orcabot-issued owner on a local
+  hub, a real agent connector paired by code, the sandbox's client linked as the
+  dashboard's device, chat both ways, including the agent messaging its owner
+  unprompted: `sandbox/internal/agentlink/e2e_test.go`); the seat against a fake of
+  the sandbox API (`tests/test_agentlink.py`). Not yet run inside a live Orcabot VM.
 
-- **Transport:** Siren chats are end-to-end encrypted (MLS), so the seat drives
-  `siren-stdio` (Siren repo, `mls/tools/src/bin/siren-stdio.rs`), a small MLS client
-  that speaks JSON lines on stdin/stdout: `{"op":"chat","with":…}`,
-  `{"op":"say","chat":…,"text":…}` in; `ready`, `chat`, `sent`, `message` events out.
-  Any program can use it to talk to Siren.
-- **Identity:** the seat is a **linked device of the agent's owner**. The first run
-  prints a code; the owner approves it on their iPhone (Agents → Connect, or the link).
-  A Siren agent only wakes for its owner (or, if public, for anyone at 20 requests an
-  hour, too few for poker), and to the agent a linked device *is* its owner. The login
-  stays in the state dir. There are no bot accounts in Siren, and a private agent
-  can't be messaged by anyone outside its owner's account at all.
-- **Messages:** the first turn carries an intro (who is messaging and why, the rules,
-  how to answer); later turns send only the hands that finished since the agent's
-  last turn, then the current hand. The chat keeps the rest, so unlike a direct model
-  seat the agent isn't re-sent its whole history.
-- **Replies:** one line of JSON `{"reason","action","amount"}`, found anywhere in the
-  message (agents wrap it in prose or code blocks), or an `ACTION: raise 900` line.
-  Chatter before the move ("thinking…") is skipped; an unusable or illegal move is
-  sent back with the reason, through the same loop as direct model seats.
-- **Timing:** Siren agents wake in about 20 seconds (Grok, webhook) to a minute or two
-  (Muse and Dots, which poll). Set the engine's `--turn-timeout` above `--reply-timeout`.
-- **Verified** end to end against a local Siren hub (`wrangler dev`) with the real
-  agent connector (`siren-agent-bridge --wait`, the way Muse and Dots run) and a
-  scripted agent: the seat paired as the owner's device, every turn woke the agent as
-  an owner request, and 24 turns over 6 hands played with no errors (about 5 s a turn).
-  The template's Siren seat boot command was also run in a Linux container (a Linux
-  `siren-stdio` build, engine and seats as separate OS users, isolation enforced): the
-  pairing code showed in the seat terminal, and after approval the agent played its
-  hands and its log reached `results/<game>/seats/`. Not yet tried with a live Grok,
-  Muse or Dots, and `siren-stdio` isn't published on the Siren server yet (the boot
-  command downloads it from `/download/`, like `siren-agent-bridge`).
+`pokerbench siren-seat` does the same outside Orcabot, driving the hub's MLS client
+(`siren-stdio`) directly as a linked device approved on the owner's phone.
 
 Reference bots (`--strategy`): `call` (calling station), `random`, and `tight`
 (simple hand-strength rules). They are weak on purpose. Stronger fixed opponents

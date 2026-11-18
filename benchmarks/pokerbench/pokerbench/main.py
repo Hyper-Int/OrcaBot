@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v6-siren-seat
+# REVISION: pokerbench-main-v7-agent-blocks
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -31,7 +31,7 @@ from .engine import ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v6-siren-seat"
+MAIN_REVISION = "pokerbench-main-v7-agent-blocks"
 
 
 # Experiment conditions (DESIGN.md, phase 5). Each is an agent prompt plus the
@@ -175,6 +175,48 @@ def cmd_llm_seat(args) -> int:
     return 0
 
 
+def cmd_agents(args) -> int:
+    """List the Agent blocks this Orcabot terminal is connected to (one per line:
+    seat-name identity), for the table to seat them."""
+    import re
+
+    from .agentlink import AgentLinkClient
+
+    try:
+        agents = AgentLinkClient().agents()
+    except SystemExit:
+        return 0  # not in Orcabot: no agents
+    except Exception as e:  # noqa: BLE001
+        print(f"couldn't list agents: {e}", file=sys.stderr)
+        return 0
+    seen = set()
+    for a in agents:
+        seat = re.sub(r"[^a-z0-9._-]", "-", (a.get("name") or "agent").lower()).strip("-") or "agent"
+        while seat in seen:
+            seat += "2"
+        seen.add(seat)
+        print(f"{seat} {a['identity']}")
+    return 0
+
+
+def cmd_agent_seat(args) -> int:
+    """An Agent block connected to this terminal plays a seat, by chat."""
+    from .agentlink import AgentLinkSeat
+    from .llm import play as play_llm
+
+    token = Path(args.token_file).read_text().strip() if args.token_file else None
+    seat = AgentLinkSeat(args.agent, reply_timeout=args.reply_timeout)
+    name = args.agent.rsplit(":", 1)[-1]
+    info = os.environ.get("POKER_SEAT_INFO") or args.label or f"agent/{name} (Agent block)"
+    client = Client(url=args.url, token=token, seat=args.seat, info=info)
+    print(f"agent-seat: {name} plays {args.seat or os.environ.get('POKER_SEAT')}", flush=True)
+    feed = None if args.quiet else (lambda line: print(line, flush=True))
+    final = play_llm(client, seat, max_retries=args.max_retries,
+                     log_path=Path(args.log) if args.log else None, feed=feed)
+    print(json.dumps(final["score"]))
+    return 0
+
+
 def cmd_siren_seat(args) -> int:
     """A Siren agent plays a seat by chat, through a linked device of its owner."""
     from .llm import play as play_llm
@@ -311,7 +353,22 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--run-dir")
     d.set_defaults(fn=cmd_demo)
 
-    ss = sub.add_parser("siren-seat", help="a Siren agent (Grok Bot, Muse, ...) plays a seat by chat")
+    ag = sub.add_parser("agents", help="Orcabot: list the Agent blocks this terminal is connected to")
+    ag.set_defaults(fn=cmd_agents)
+
+    asx = sub.add_parser("agent-seat", help="Orcabot: a connected Agent block plays a seat by chat")
+    asx.add_argument("--agent", required=True, help="the agent's identity (from `pokerbench agents`)")
+    asx.add_argument("--reply-timeout", type=float, default=150.0, help="seconds to wait for each reply")
+    asx.add_argument("--label", help="how the seat introduces itself (default agent/<name> (Agent block))")
+    asx.add_argument("--max-retries", type=int, default=1, help="extra tries after an unusable reply")
+    asx.add_argument("--url", help="engine URL (default POKER_URL)")
+    asx.add_argument("--seat", help="seat to claim (default POKER_SEAT)")
+    asx.add_argument("--token-file")
+    asx.add_argument("--log", help="append one JSON line per turn (latency, reply, action)")
+    asx.add_argument("--quiet", action="store_true", help="no per-decision feed on stdout")
+    asx.set_defaults(fn=cmd_agent_seat)
+
+    ss = sub.add_parser("siren-seat", help="outside Orcabot: a Siren agent plays a seat by chat")
     ss.add_argument("--agent", required=True, help="the agent's Siren identity, e.g. +447700900001/agent:grok")
     ss.add_argument("--state", required=True, help="siren-stdio state dir (its login and chat keys)")
     ss.add_argument("--siren-bin", default="siren-stdio", help="path to siren-stdio (Siren repo, mls/tools)")

@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v2-seat-components
+# REVISION: pokerbench-table-engine-v3-agent-blocks
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment:
@@ -17,12 +17,15 @@
 #   SEATS        every seat at the table, space-separated. Each is a seat terminal on
 #                the canvas with the same SEAT=: an agent (Claude Code, Codex, ...) or a
 #                model played through its provider's API. Seats report who they are.
+#                Agent blocks (outside agents: Grok Bot, Muse, Dots, ...) connected to
+#                this engine terminal on the canvas are seated too, named after the
+#                agent, and played from here by chat (pokerbench agent-seat).
 #   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV (in PUB: model
 #   seats run the API player from it)
 #
 # Seats find the engine through $PUB/engine.env, which also lists who is seated.
 set -u
-REVISION=pokerbench-table-engine-v2-seat-components
+REVISION=pokerbench-table-engine-v3-agent-blocks
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench/pokerbench"
@@ -32,6 +35,13 @@ case "$FORMAT" in tournament|cash) ;; *) die "FORMAT must be tournament or cash 
 case "$HONEYPOTS" in off|hidden|obvious) ;; *) die "HONEYPOTS must be off, hidden or obvious";; esac
 
 SEATS_LIST="${SEATS:-}"; unset SEATS; read -r -a SEATS <<<"$SEATS_LIST"
+# Agent blocks connected to this terminal: "seat identity" per line.
+AGENT_SEATS=()
+while read -r seat identity; do
+  [ -n "$seat" ] || continue
+  case " ${SEATS[*]} " in *" $seat "*) ;; *) SEATS+=("$seat");; esac
+  AGENT_SEATS+=("$seat|$identity")
+done < <("$PB" agents 2>/dev/null)
 N=${#SEATS[@]}
 [ "$N" -ge 2 ] && [ "$N" -le 10 ] || die "a table needs 2 to 10 SEATS; got $N"
 for s in "${SEATS[@]}"; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
@@ -74,9 +84,21 @@ until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
   sleep 1
 done
 
+# Agent blocks play from here: each seat chats with its agent through Orcabot's sandbox.
+PIDS=()
+for as in ${AGENT_SEATS[@]+"${AGENT_SEATS[@]}"}; do
+  seat="${as%%|*}"; identity="${as#*|}"
+  until [ -s "$PRIV/tokens/$seat.token" ]; do sleep 1; done
+  ( "$PB" agent-seat --agent "$identity" --seat "$seat" --token-file "$PRIV/tokens/$seat.token" \
+      --url "http://127.0.0.1:$PORT" --reply-timeout $(( TURN_TIMEOUT > 40 ? TURN_TIMEOUT - 15 : TURN_TIMEOUT - 5 )) \
+      --log "$RUN/$seat.calls.jsonl" < /dev/null 2>&1 | sed -u "s/^/[$seat] /" ) &
+  PIDS+=($!)
+  echo "   agent seat $seat: $identity"
+done
 echo "Spectate at http://localhost:$PORT/ . Each seat starts in its own terminal."
 
 wait $ENGINE
+for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done
 cp -R "$RUN"/. "$OUT"/ && chmod -R a+rX "$OUT"
 echo; cat "$OUT/report.md" 2>/dev/null
 echo "Results: $OUT"
