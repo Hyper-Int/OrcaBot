@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v15-self-input
+// REVISION: privileged-socket-v16-own-screen
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v15-self-input"
+const privilegedSocketRevision = "privileged-socket-v16-own-screen"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -253,6 +253,10 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	// agent the user started there). Only ever the caller's own PTY. REVISION: self-input-v1
 	mux.HandleFunc("/input", func(w http.ResponseWriter, r *http.Request) {
 		ps.server.handleSelfInputForPTY(w, r, session, entry.PTYID)
+	})
+	// /screen → this PTY's raw recent output, to render its current screen. REVISION: self-input-v2-own-screen
+	mux.HandleFunc("/screen", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleOwnScreenForPTY(w, r, session, entry.PTYID)
 	})
 
 	// /tools-changed → broadcast tools_changed event.
