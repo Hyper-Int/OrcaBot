@@ -30,6 +30,14 @@ D1_URL = os.environ.get("D1_URL", "http://127.0.0.1:9001")
 AUTHOR_ID = os.environ.get("AUTHOR_ID", "dev-desktop")
 AUTHOR_NAME = os.environ.get("AUTHOR_NAME", "OrcaBot")
 
+# REVISION: seed-benchmark-templates-v2-stable-id
+# A template's id is derived from its name, so re-seeding keeps it: a dashboards page
+# loaded before a re-seed still creates from the right template. (A fresh id each time
+# made such a page create an empty dashboard: the control plane found no template.)
+def template_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://orcabot.com/benchmark-templates/{name}"))
+
+
 # benchmarks/ root (this file lives in benchmarks/bin/).
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -57,7 +65,7 @@ def discover(filter_dirs):
 
 
 def upsert(tpl):
-    tid = str(uuid.uuid4())
+    tid = template_id(tpl["name"])
     now = datetime.datetime.utcnow().isoformat()
     q("DELETE FROM dashboard_templates WHERE name = ?", [tpl["name"]])
     q(
@@ -86,7 +94,7 @@ def _sql_lit(v):
 
 def emit_sql(tpl):
     """Emit DELETE+INSERT SQL for a template (for `wrangler d1 execute --file`)."""
-    tid = str(uuid.uuid4())
+    tid = template_id(tpl["name"])
     now = datetime.datetime.utcnow().isoformat()
     cols = ("id,name,description,category,author_id,author_name,items_json,edges_json,"
             "viewport_json,setup_guide,item_count,is_featured,use_count,status,created_at,updated_at")
