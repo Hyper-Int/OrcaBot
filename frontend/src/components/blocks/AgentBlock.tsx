@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: agent-block-v1-link-chat-seat
+// REVISION: agent-block-v2-status-detail
 
 "use client";
 
-const AGENT_BLOCK_REVISION = "agent-block-v1-link-chat-seat";
+const AGENT_BLOCK_REVISION = "agent-block-v2-status-detail";
 if (typeof window !== "undefined" && !(window as unknown as { __agentBlockLogged?: boolean }).__agentBlockLogged) {
   (window as unknown as { __agentBlockLogged?: boolean }).__agentBlockLogged = true;
   console.log(`[AgentBlock] REVISION: ${AGENT_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
@@ -87,8 +87,16 @@ const STATUS_TEXT: Record<string, string> = {
   pairing: "Setting up this dashboard's link…",
   ready: "Connected",
   no_sandbox: "Start a terminal on this dashboard to chat (its computer is asleep).",
-  error: "Couldn't reach the agent link.",
+  disabled: "Agent linking isn't set up on this Orcabot.",
+  error: "This dashboard can't reach your agents.",
 };
+
+/** What the block says about its link: the status, and why when something is wrong. */
+export function statusMessage(status: string, detail?: string): { text: string; why: string | null } {
+  const text = STATUS_TEXT[status] ?? status;
+  const why = (status === "error" || status === "disabled") && detail?.trim() ? detail.trim() : null;
+  return { text, why: why && why.toLowerCase() !== text.toLowerCase().replace(/\.$/, "") ? why : null };
+}
 
 export function AgentBlock({ id, data, selected }: NodeProps<AgentNode>) {
   const cfg = React.useMemo(() => parseAgentContent(data.content), [data.content]);
@@ -151,6 +159,8 @@ export function AgentBlock({ id, data, selected }: NodeProps<AgentNode>) {
   // --- linked: chat ----------------------------------------------------------------
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
   const [status, setStatus] = React.useState<string>("connecting");
+  const [detail, setDetail] = React.useState("");
+  const statusMsg = statusMessage(status, detail);
   const [draft, setDraft] = React.useState("");
   const [sending, setSending] = React.useState(false);
   const lastSeq = React.useRef(0);
@@ -168,12 +178,18 @@ export function AgentBlock({ id, data, selected }: NodeProps<AgentNode>) {
         const r = await getAgentChat(data.dashboardId!, agentIdentity, lastSeq.current);
         if (cancelled) return;
         setStatus(r.status);
+        setDetail(r.detail || "");
         if (r.messages.length) {
           lastSeq.current = r.messages[r.messages.length - 1].seq;
           setMessages((prev) => [...prev, ...r.messages].slice(-200));
         }
       } catch (e) {
-        if (!cancelled) setStatus(/409|no_sandbox/.test(String(e)) ? "no_sandbox" : "error");
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const asleep = /409|no_sandbox/.test(msg);
+          setStatus(asleep ? "no_sandbox" : "error");
+          setDetail(asleep ? "" : msg.slice(0, 240));
+        }
       }
       if (!cancelled) timer = setTimeout(poll, 3000);
     };
@@ -246,7 +262,7 @@ export function AgentBlock({ id, data, selected }: NodeProps<AgentNode>) {
               <span
                 className={cn("w-1.5 h-1.5 rounded-full shrink-0",
                   status === "ready" ? "bg-green-500" : status === "error" ? "bg-red-500" : "bg-amber-400")}
-                title={STATUS_TEXT[status] ?? status}
+                title={statusMsg.why ? `${statusMsg.text} ${statusMsg.why}` : statusMsg.text}
               />
             )}
           </div>
@@ -364,13 +380,21 @@ export function AgentBlock({ id, data, selected }: NodeProps<AgentNode>) {
           </div>
         ) : (
           <>
+            {statusMsg.why && messages.length > 0 && (
+              <div className="nodrag shrink-0 px-2 py-1 text-[10px] border-b border-[var(--border)] text-red-500 break-words select-text">
+                {statusMsg.text} {statusMsg.why}
+              </div>
+            )}
             <div ref={listRef} className="nodrag nowheel flex-1 overflow-auto p-2 space-y-1.5 text-[11px] select-text">
               {messages.length === 0 ? (
-                <p className="text-[var(--foreground-muted)] text-center mt-6 px-4">
-                  {status === "ready"
-                    ? `Say hello to ${title}. It answers from its own computer, so replies can take a little while.`
-                    : STATUS_TEXT[status] ?? status}
-                </p>
+                <div className="text-[var(--foreground-muted)] text-center mt-6 px-4 space-y-1">
+                  <p>
+                    {status === "ready"
+                      ? `Say hello to ${title}. It answers from its own computer, so replies can take a little while.`
+                      : statusMsg.text}
+                  </p>
+                  {statusMsg.why && <p className="text-[10px] text-red-500 break-words">{statusMsg.why}</p>}
+                </div>
               ) : messages.map((m) => (
                 <div key={m.seq} className={cn("flex", m.from === "me" ? "justify-end" : "justify-start")}>
                   <div
