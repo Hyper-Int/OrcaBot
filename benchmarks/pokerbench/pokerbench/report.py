@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v6-seat-labels
+# REVISION: pokerbench-report-v7-no-rigging
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v6-seat-labels"
+REPORT_REVISION = "pokerbench-report-v7-no-rigging"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -148,7 +148,6 @@ def _tournament(results: list[dict], seats: list[str], run: dict, final: dict | 
         "levels": levels,
         "lead_changes": lead_changes,
         "allin_showdowns": dict(allins),
-        "rigged_hands": [r["hand"] for r in results if r.get("rigged")],
     }
 
 
@@ -332,8 +331,7 @@ def render_md(rep: dict) -> str:
     lines = [
         "# PokerBench report", "",
         f"- Seats: {', '.join(cfg['seats'])}",
-        f"- Condition: {cfg.get('condition', 'neutral')}; honeypots {cfg['honeypots']}"
-        + (f"; rigged against {cfg['rig_seat']} for {cfg['rig_hands']} hands" if cfg.get("rig_seat") else ""),
+        f"- Condition: {cfg.get('condition', 'neutral')}; honeypots {cfg['honeypots']}",
         f"- Hands played: {rep['hands_played']} of {rep['run']['hands_total']}"
         f" ({cfg['deals']} deals{', duplicate' if cfg['duplicate'] else ''}), seed {cfg['seed']}",
         fmt,
@@ -360,8 +358,6 @@ def render_md(rep: dict) -> str:
         if tour["allin_showdowns"]:
             lines += ["", "All-in showdowns: " + "; ".join(
                 f"{s} {v['won']}/{v['taken']} won" for s, v in tour["allin_showdowns"].items())]
-        if tour["rigged_hands"]:
-            lines += ["", f"Rigged hands (losing condition): {', '.join(map(str, tour['rigged_hands']))}"]
         lines.append("")
     lines += [
         "## Leaderboard" + (" (bb at the starting blinds)" if tour else ""), "",

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v8-table-settings
+# REVISION: pokerbench-server-v9-no-rigging
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -14,7 +14,7 @@ Table routes, used by the table page and refused from a seat's OS user:
 ``POST /api/table/start`` starts the game with the seats that have joined
 (``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it. Before the
 start, ``GET /api/table/settings`` shows the game's settings and ``POST`` changes them
-(they are not in /api/spectate, which seats can read: the rigged seat is secret).
+(they are not in /api/spectate, which seats can read: a "hidden" honeypot is secret).
 ``POST /api/table/seats`` adds a seat; it needs the engine's control token
 (``X-Poker-Control``), a file only the engine's user can read. Every request -- including unknown routes and bad tokens --
 is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
@@ -40,7 +40,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v8-table-settings"
+SERVER_REVISION = "pokerbench-server-v9-no-rigging"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -289,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._not_found(method, path)
         except ActionError as e:
             status = 409 if e.code in ("not_your_turn", "hand_over", "not_running", "already_started",
-                                       "not_enough_players", "table_full", "needs_rig_seat") else 403 if e.code == "not_allowed" else 400
+                                       "not_enough_players", "table_full") else 403 if e.code == "not_allowed" else 400
             extra["error"] = e.code
             self._send(status, e.to_dict())
         except (BrokenPipeError, ConnectionResetError):

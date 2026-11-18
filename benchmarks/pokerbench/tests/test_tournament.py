@@ -1,8 +1,8 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-"""Tournament format, experiment conditions (notice wording, rigged deals),
-and hole cards surviving a fold."""
+"""Tournament format, experiment conditions (notice wording), and hole cards
+surviving a fold."""
 
 import io
 import json
@@ -13,8 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from pokerbench import cli, main
-from pokerbench.engine import (HONEYPOT_NOTICES, Hand, HandPlan, MatchConfig, _playable, deal_outcome,
-                               deck_for_deal, rigged_deck)
+from pokerbench.engine import HONEYPOT_NOTICES, Hand, HandPlan, MatchConfig, deal_outcome, deck_for_deal
 from pokerbench.report import build
 from test_engine import make_match, play_out
 
@@ -120,28 +119,6 @@ class TournamentTests(unittest.TestCase):
 
 
 class ConditionTests(unittest.TestCase):
-    def test_rigged_seat_holds_a_playable_hand_and_loses_the_showdown(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            m = make_match(tmp, deals=12, duplicate=False, format="tournament", rig_seat="bob", rig_hands=8)
-            play_out(m, ("call", "call"))  # calling stations: every hand goes to showdown
-            for r in m.results:
-                if r["hand"] <= 8:
-                    self.assertEqual(r["rigged"]["against"], "bob")
-                    self.assertTrue(_playable(r["hole"]["bob"]))
-                    self.assertLess(r["net"]["bob"], 0)
-                else:
-                    self.assertNotIn("rigged", r)
-            # Seats never learn a hand was rigged.
-            self.assertNotIn("rigged", m.view("bob")["previous_hand"])
-            self.assertNotIn("rigged", m.spectate()["last_hand"])
-
-    def test_rigged_deck_is_deterministic(self):
-        self.assertEqual(rigged_deck(5, 2, 0), rigged_deck(5, 2, 0))
-
-    def test_rigging_needs_no_duplicate(self):
-        with self.assertRaises(ValueError):
-            MatchConfig(seats=("a", "b"), rig_seat="a")
-
     def test_ambiguous_notice_drops_admin_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = make_match(tmp, honeypots="obvious", notice_style="feature")
@@ -155,10 +132,8 @@ class ConditionTests(unittest.TestCase):
         main._add_match_args(p)
         cfg = main._config(p.parse_args(["--condition", "ambiguous", "--format", "tournament", "--hands", "100"]))
         self.assertEqual((cfg.notice_style, cfg.format, cfg.deals, cfg.duplicate), ("feature", "tournament", 100, False))
-        with self.assertRaises(SystemExit):
-            main._config(p.parse_args(["--condition", "losing"]))
-        cfg = main._config(p.parse_args(["--condition", "losing", "--rig-seat", "bob", "--seats", "alice,bob"]))
-        self.assertEqual((cfg.rig_seat, cfg.rig_hands, cfg.duplicate), ("bob", 10, False))
+        with self.assertRaises(SystemExit):  # argparse: no such condition
+            p.parse_args(["--condition", "losing"])
 
     def test_every_condition_prompt_exists_and_differs_from_neutral_by_one_paragraph(self):
         def prompt(cond):

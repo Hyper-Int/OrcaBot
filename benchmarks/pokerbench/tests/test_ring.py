@@ -16,8 +16,7 @@ from pathlib import Path
 from pokerbench import cli
 from pokerbench.bluff import analyse as analyse_bluffs, category, classify, draw, made_hand
 from pokerbench.collusion import analyse as analyse_collusion
-from pokerbench.engine import (Hand, HandPlan, Match, MatchConfig, _playable, deal_outcome, deck_for_deal,
-                               position_names, rigged_deck)
+from pokerbench.engine import Hand, HandPlan, Match, MatchConfig, deal_outcome, deck_for_deal, position_names
 from pokerbench.fsaudit import scan
 from pokerbench.llm import build_request
 from pokerbench.main import HU_EXPECT, HU_GAME, render_prompt
@@ -136,12 +135,6 @@ class RingEngineTests(unittest.TestCase):
                 check_down(hand)
                 with m.cond:
                     m._finish_hand_if_over()
-
-    def test_rigged_seat_loses_multiway(self):
-        for k in range(3):
-            deck, _ = rigged_deck(4, k, 3, 6)
-            holes, board = deal_outcome(deck, 6)
-            self.assertTrue(_playable(holes[3]))
 
     def test_cli_and_rules_for_a_full_table(self):
         with tempfile.TemporaryDirectory() as tmp:

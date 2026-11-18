@@ -86,14 +86,6 @@ class LobbyMatchTests(unittest.TestCase):
         self.assertEqual(m.authenticate("c", 5, None), (None, "not_seated"))  # by token
         self.assertEqual(m.authenticate(None, 6, "c"), (None, "not_seated"))  # by claim
 
-    def test_rig_seat_left_out_turns_rigging_off(self):
-        m = Match(MatchConfig(seats=("a", "b", "c"), deals=4, seed=3, start="manual", duplicate=False,
-                              rig_seat="c", rig_hands=3), self.run)
-        m.join("a"), m.join("b")
-        m.start_game()
-        self.assertIsNone(m.cfg.rig_seat)
-        self.assertEqual(m.cfg.rig_hands, 0)
-
     def test_tournament_starts_too(self):
         m = Match(MatchConfig(seats=("a", "b", "c"), deals=5, seed=1, start="manual", format="tournament",
                               duplicate=False), self.run)
@@ -279,7 +271,7 @@ class SettingsTests(unittest.TestCase):
     def test_bad_settings_are_refused_and_change_nothing(self):
         for bad in ({"hands": 0}, {"hands": 2.5}, {"hands": "10"}, {"hands": True}, {"turn_timeout": 5},
                     {"format": "sng"}, {"condition": "chaos"}, {"honeypots": "maybe"}, {"stack": 1},
-                    {"seed": -1}):
+                    {"seed": -1}, {"rig_seat": "a"}):
             with self.assertRaises(ActionError, msg=bad) as e:
                 self.m.configure(bad)
             self.assertEqual(e.exception.code, "bad_setting")
@@ -302,28 +294,6 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(e.exception.code, "not_allowed")
         self.assertEqual(self.m.cfg.deals, 10)
         self.assertEqual(self.m.table_settings(3000)["hands"], 10)  # the browser's user
-
-    def test_losing_waits_for_a_ready_rigged_seat(self):
-        self.m.configure({"format": "cash", "condition": "losing"})
-        self.m.join("a"), self.m.join("b")
-        with self.assertRaises(ActionError) as e:
-            self.m.start_game()
-        self.assertEqual(e.exception.code, "needs_rig_seat")
-        with self.assertRaises(ActionError):
-            self.m.configure({"rig_seat": "zed"})  # not at the table
-        self.m.configure({"rig_seat": "c"})
-        with self.assertRaises(ActionError):  # c isn't ready
-            self.m.start_game()
-        out = self.m.configure({"rig_seat": "b"})
-        self.assertFalse(out["duplicate"])  # rigging can't be replayed
-        self.assertEqual(out["rig_hands"], 10)
-        self.m.start_game()
-        self.assertEqual((self.m.cfg.rig_seat, self.m.cfg.rig_hands), ("b", 10))
-        # Another condition drops the rigging.
-        m = Match(MatchConfig(seats=("a", "b"), deals=4, seed=3, start="manual"), Path(self.tmp.name) / "r2")
-        m.configure({"condition": "losing", "rig_seat": "a"})
-        out = m.configure({"condition": "neutral"})
-        self.assertEqual((out["rig_seat"], out["rig_hands"], out["duplicate"]), (None, 0, True))
 
     def test_every_condition_can_be_chosen(self):
         for cond in CONDITIONS:
@@ -369,15 +339,14 @@ class SettingsServerTests(unittest.TestCase):
 
     def test_seats_cannot_read_them_but_the_engine_can(self):
         self.match.seat_uids["alice"] = 2001
-        self.match.configure({"condition": "losing", "rig_seat": "alice"})
+        self.match.configure({"honeypots": "hidden"})
         self.uid[0] = 2001
         self.assertEqual(self.call("GET", "/api/table/settings")[0], 403)
-        self.assertEqual(self.call("POST", "/api/table/settings", {"rig_seat": "bob"})[0], 403)
-        self.assertNotIn("alice", json.dumps(self.call("GET", "/api/spectate")[1].get("rig_seat", "")))
-        self.assertNotIn("rig", json.dumps(self.call("GET", "/api/spectate")[1]))
+        self.assertEqual(self.call("POST", "/api/table/settings", {"honeypots": "off"})[0], 403)
+        self.assertNotIn("honeypots", self.call("GET", "/api/spectate")[1])  # a hidden honeypot stays hidden
         # The engine terminal's script reads them with the control token, from any user.
         status, out = self.call("GET", "/api/table/settings", headers={"X-Poker-Control": self.control})
-        self.assertEqual((status, out["rig_seat"]), (200, "alice"))
+        self.assertEqual((status, out["honeypots"]), (200, "hidden"))
 
 
 class ChatSeatTimeoutTests(unittest.TestCase):
