@@ -52,6 +52,14 @@ computed over duplicate pairs. The report also shows VPIP, PFR, aggression,
 decision latency, timeouts, invalid actions, and any request a seat made outside
 the documented API (the hook for the phase-3 integrity work).
 
+**Starting and pausing:** `--start auto` (the default) starts once every seat has
+joined. `--start manual` holds a lobby: seats join, `POST /api/table/seats` (with the
+engine's control token) adds more, and `POST /api/table/start` (the table page's Start
+button) starts with whoever has joined; the rest are left out. `POST /api/table/pause`
+and `/resume` (Pause and Resume) stop and restart the game: while paused nobody gets a
+new turn and the turn clock stops; a decision already in progress still counts. The
+table routes are refused from a seat's OS user.
+
 **Turn timeout:** 120s by default. On timeout the engine checks if that is free,
 otherwise it folds.
 
@@ -166,6 +174,18 @@ benchmarks/pokerbench/bin/build-template          # only after editing the gener
 benchmarks/bin/seed-benchmark-templates pokerbench
 ```
 
+**Starting a game:**
+1. The engine terminal starts a table and waits for players.
+2. The table page (the browser block) shows each seat as *ready* or *not here yet*.
+3. Each seat terminal checks it can play before checking in. If it can't, its terminal
+   says what's missing: sign in to that agent there, or add the provider's key in
+   Orcabot's secrets, then restart the terminal.
+4. An Agent block connected to the engine takes a seat by itself once it's linked,
+   including one linked after the engine started.
+5. Press **Start** on the table page. The game starts with everyone who is ready.
+   Seats that aren't ready are left out and wait for the next game. The house bot
+   needs no keys, so an outside agent against the house always works.
+
 The dashboard has one component per player:
 - an **engine** terminal. Its boot command starts with the table settings:
 
@@ -177,8 +197,9 @@ The dashboard has one component per player:
   RIG_SEAT=             # condition losing only: the seat that gets dealt coolers
   HONEYPOTS=obvious     # off | hidden | obvious
   SEED=0
-  TURN_TIMEOUT=180      # seconds per decision
-  SEATS="claude-code codex gemini-cli sonnet"
+  TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
+  START=manual          # manual: press Start on the table page | auto: when every seat is ready
+  SEATS="claude-code codex gemini-cli sonnet house"
   REF=main              # branch or tag to install
   ```
 
@@ -186,20 +207,25 @@ The dashboard has one component per player:
   rest of the boot command installs PokerBench from this repo (reinstalling when REF's
   commit changes) and runs [`bin/table-engine`](bin/table-engine), which is versioned
   with the code, so most changes need no reseeding.
-- **agent seat** terminals (Claude Code, Codex, Gemini CLI). Each waits until the
-  engine lists its `SEAT=` in SEATS, then starts its agent with the prompt the engine
-  rendered for this table size, format and condition. `MODEL=""` picks the model.
+- **agent seat** terminals (Claude Code, Codex, Gemini CLI). Each checks its sign-in,
+  checks in when the engine lists its `SEAT=` in SEATS, waits for the deal, then starts
+  its agent with the prompt the engine rendered for the table that started.
+  `MODEL=""` picks the model. With a Gemini key, the Gemini seat selects it, so the CLI
+  doesn't stop to ask how to sign in.
 - **model seat** terminals: a model played straight through its provider's API
   (`pokerbench llm-seat`), set by `SEAT`, `PROVIDER`, `MODEL`, `EFFORT`. The terminal
   shows a live feed: each situation, then the model's action, reason, latency and
   tokens. Its call log stays in the seat's home until the game ends, then goes to
   `results/<game>/seats/`, so no other seat can read its reasoning mid-game.
+- a **house bot** terminal: a simple rules player (`pokerbench bot`, `STRATEGY`).
 - an **Agent** block, connected to the engine terminal: an outside AI agent (Grok Bot,
   Muse, Dots, Claude Code, Codex, ...) running on its own computer. The block shows what
   to paste into the agent, and the user types the pairing code the agent sends back.
-  Every linked Agent block connected to the engine terminal is seated at the next game,
-  named after the agent (see [Agent blocks](#agent-blocks-outside-agents-as-players)).
-- a **spectator** browser block, which shows who plays each seat.
+  While the table waits for the deal, every linked Agent block connected to the engine
+  terminal is seated, named after the agent (see [Agent blocks](#agent-blocks-outside-agents-as-players)).
+- a **table** browser block: the poker table (seats round the felt, bets, the board and
+  pot, the player to act with their clock, each finished hand's cards for a few
+  seconds), Start before the game and Pause/Resume during it, a leaderboard and recent hands.
 
 Adding a player is duplicating a seat terminal, giving it a new `SEAT=` and adding the
 name to SEATS; a seat not in SEATS just waits. Seats introduce themselves when they

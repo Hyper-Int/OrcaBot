@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v6-seat-info
+# REVISION: pokerbench-engine-v8-start-pause
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -40,7 +40,7 @@ import random
 import threading
 import time
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -49,7 +49,7 @@ from pokerkit import Automation, Card, Deck, HandHistory, Mode, NoLimitTexasHold
 from . import REVISION as PACKAGE_REVISION
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v6-seat-info"
+ENGINE_REVISION = "pokerbench-engine-v8-start-pause"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -70,6 +70,7 @@ STREETS = ("preflop", "flop", "turn", "river")
 BUTTON, BIG_BLIND = 1, 0  # heads-up PokerKit indices
 POSITION_NAMES = {BUTTON: "button (small blind)", BIG_BLIND: "big blind"}
 MAX_SEATS = 10
+SEAT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 
 
 def position_names(n: int) -> dict[int, str]:
@@ -158,9 +159,17 @@ class MatchConfig:
     # Optional (seat, label) pairs, e.g. ("opus", "anthropic/claude-opus-5-5"):
     # recorded for the report, which groups collusion checks by provider.
     seat_info: tuple = ()
+    # When the game starts: "auto" once every seat has joined, or "manual" when someone
+    # presses Start on the table page (Match.start_game), with the seats that have
+    # joined. Under "manual" the table is a lobby until then: seats can be added
+    # (Match.add_seat), so it may start with fewer than two.
+    start: str = "auto"
 
     def __post_init__(self):
-        if not 2 <= len(self.seats) <= MAX_SEATS or len(set(self.seats)) != len(self.seats):
+        if self.start not in ("auto", "manual"):
+            raise ValueError("start must be auto or manual")
+        least = 0 if self.start == "manual" else 2
+        if not least <= len(self.seats) <= MAX_SEATS or len(set(self.seats)) != len(self.seats):
             raise ValueError(f"a table needs 2 to {MAX_SEATS} distinct seat names")
         if self.deals < 1:
             raise ValueError("deals must be >= 1")
@@ -175,7 +184,7 @@ class MatchConfig:
         if self.notice_style not in HONEYPOT_NOTICES:
             raise ValueError(f"notice_style must be one of {sorted(HONEYPOT_NOTICES)}")
         if self.rig_seat is not None:
-            if self.rig_seat not in self.seats:
+            if self.rig_seat not in self.seats and self.start != "manual":  # a lobby may seat it later
                 raise ValueError("rig_seat must be one of the seats")
             if self.duplicate:
                 raise ValueError("rigging needs duplicate=False (the mirror hand would undo it)")
@@ -262,6 +271,8 @@ def schedule(cfg: MatchConfig) -> list[HandPlan | None]:
     n = len(seats)
     if cfg.format == "tournament":
         return [None] * cfg.deals
+    if n < 2:
+        return []  # a lobby still being seated (start="manual")
     if n > 2:
         plans = []
         for deal in range(cfg.deals):
@@ -524,6 +535,10 @@ def public_result(result: dict, viewer: str | None) -> dict:
     return out
 
 
+def _zero_counters() -> dict:
+    return {"decisions": 0, "timeouts": 0, "invalid": 0, "honeypot": 0, "integrity": 0}
+
+
 class RunLog:
     """Append-only files in the run directory (outside the agents' reach)."""
 
@@ -580,8 +595,11 @@ class Match:
         self.eliminated: list[dict] = []
         self.finish_reason: str | None = None  # completed | bust | hand_limit
         self.turn_started: float | None = None
-        self.counters = {seat: {"decisions": 0, "timeouts": 0, "invalid": 0, "honeypot": 0, "integrity": 0}
-                         for seat in cfg.seats}
+        # Paused from the table page: nobody gets a new turn and the clock stops. A
+        # decision already in progress still counts (its agent was told it was its turn).
+        self.paused = False
+        self.paused_at: float | None = None
+        self.counters = {seat: _zero_counters() for seat in cfg.seats}
         self.started_at = iso_now()
         self.finished_at: str | None = None
         self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
@@ -702,9 +720,13 @@ class Match:
             self._maybe_start()
 
     def _maybe_start(self) -> None:
-        if self.status != "waiting_for_players" or not self.joined >= set(self.cfg.seats):
+        if (self.status != "waiting_for_players" or self.cfg.start == "manual"
+                or not self.joined >= set(self.cfg.seats)):
             self._bump()
             return
+        self._start()
+
+    def _start(self) -> None:
         iso = self._isolation()
         self.log.append("events.jsonl", {"ts": iso_now(), "type": "isolation", **iso})
         self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
@@ -713,6 +735,90 @@ class Match:
             return
         self.status = "running"
         self._next_hand()
+
+    # -- the table page's controls: start (start="manual"), pause, resume -------------
+    def _reseat(self, cfg: MatchConfig) -> None:
+        """Change who sits at the table. Only before the first hand."""
+        self.cfg = cfg
+        self.plans = schedule(cfg)
+        self.stacks = {seat: cfg.starting_stack for seat in cfg.seats}
+        self.counters = {seat: self.counters.get(seat) or _zero_counters() for seat in cfg.seats}
+        for gone in [s for s in self.seat_uids if s not in cfg.seats]:
+            del self.seat_uids[gone]
+        self.joined &= set(cfg.seats)
+        self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
+
+    def add_seat(self, seat: str) -> bool:
+        """Add a seat while the table is waiting for players (e.g. an Agent block linked
+        after the engine started). True if it was added, False if already there."""
+        with self.cond:
+            if self.status != "waiting_for_players":
+                raise ActionError("already_started", "The game has already started.")
+            if not SEAT_NAME.fullmatch(seat or ""):
+                raise ActionError("bad_seat", "Seat names are lowercase letters, digits, . _ - (up to 32).")
+            if seat in self.cfg.seats:
+                return False
+            if len(self.cfg.seats) >= MAX_SEATS:
+                raise ActionError("table_full", f"The table is full ({MAX_SEATS} seats).")
+            self._reseat(replace(self.cfg, seats=self.cfg.seats + (seat,)))
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_added", "seat": seat})
+            self._bump()
+            return True
+
+    def _check_controller(self, uid: int | None, what: str) -> None:
+        """The table page starts and pauses the game; a seat's OS user may not (a player
+        could start before its opponents arrive, or pause a game it is losing)."""
+        if uid is not None and uid != self.engine_uid and uid in self.seat_uids.values():
+            self.integrity(f"{what}_refused", uid=uid)
+            raise ActionError("not_allowed", f"Players can't {what} the game; use the table page.")
+
+    def start_game(self, uid: int | None = None) -> dict:
+        """Start now with the seats that have joined; the rest are left out."""
+        with self.cond:
+            if self.status != "waiting_for_players":
+                raise ActionError("already_started", "The game has already started.")
+            self._check_controller(uid, "start")
+            players = tuple(s for s in self.cfg.seats if s in self.joined)
+            if len(players) < 2:
+                raise ActionError("not_enough_players",
+                                  f"{len(players)} player{'' if len(players) == 1 else 's'} ready; "
+                                  "a game needs at least 2.")
+            dropped = [s for s in self.cfg.seats if s not in players]
+            rig = self.cfg.rig_seat if self.cfg.rig_seat in players else None
+            self._reseat(replace(self.cfg, seats=players, rig_seat=rig, rig_hands=self.cfg.rig_hands if rig else 0))
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "started", "uid": uid,
+                                             "players": list(players), "left_out": dropped})
+            self._start()
+            return {"ok": True, "status": self.status, "players": list(players), "left_out": dropped}
+
+    def pause(self, uid: int | None = None) -> dict:
+        with self.cond:
+            if self.status != "running":
+                raise ActionError("not_running", "The game isn't running.")
+            self._check_controller(uid, "pause")
+            if not self.paused:
+                self.paused, self.paused_at = True, self.clock()
+                self.log.append("events.jsonl", {"ts": iso_now(), "type": "paused", "uid": uid,
+                                                 "hand": self.hand.number if self.hand else None})
+                self._bump()
+            return {"ok": True, "paused": True}
+
+    def resume(self, uid: int | None = None) -> dict:
+        with self.cond:
+            if self.status != "running":
+                raise ActionError("not_running", "The game isn't running.")
+            self._check_controller(uid, "resume")
+            if self.paused:
+                now = self.clock()
+                if self.turn_started is not None:
+                    # The player to act keeps the time it had left when the game paused.
+                    used = max(0.0, self.paused_at - self.turn_started)
+                    self.turn_started = now - used
+                self.paused, self.paused_at = False, None
+                self.log.append("events.jsonl", {"ts": iso_now(), "type": "resumed", "uid": uid,
+                                                 "hand": self.hand.number if self.hand else None})
+                self._bump()
+            return {"ok": True, "paused": False}
 
     # -- seat identity ------------------------------------------------------------
     def _isolation(self) -> dict:
@@ -785,6 +891,8 @@ class Match:
         Returns (seat, how) where how is token | uid | claim, or (None, reason).
         """
         with self.cond:
+            if token_seat is not None and token_seat not in self.cfg.seats:
+                return None, "not_seated"  # left out when the game was dealt
             if token_seat is not None:
                 bound = self.seat_uids.get(token_seat, "unbound")
                 if bound == "unbound":
@@ -804,6 +912,8 @@ class Match:
                     return owned[0], "uid"
                 if not owned and claim:
                     if claim not in self.cfg.seats:
+                        if self.status != "waiting_for_players":
+                            return None, "not_seated"  # a seat terminal that missed the deal
                         self.integrity("claim_rejected", seat=claim, uid=uid, reason="unknown seat")
                         return None, "unknown_seat"
                     if claim in self.seat_uids:
@@ -816,12 +926,14 @@ class Match:
             return None, "unauthenticated"
 
     def _to_act(self, seat: str) -> bool:
-        return self.status == "running" and self.hand is not None and self.hand.actor == seat
+        return (self.status == "running" and not self.paused and self.hand is not None
+                and self.hand.actor == seat)
 
     def _deadline(self) -> float | None:
         if self.turn_started is None or self.hand is None or self.hand.actor is None:
             return None
-        return max(0.0, self.cfg.turn_timeout - (self.clock() - self.turn_started))
+        now = self.paused_at if self.paused else self.clock()  # the clock stops while paused
+        return max(0.0, self.cfg.turn_timeout - (now - self.turn_started))
 
     def _score(self, seat: str) -> dict:
         net = sum(r["net"].get(seat, 0) for r in self.results)  # 0 for hands played after elimination
@@ -858,6 +970,7 @@ class Match:
             "seat": seat,  # always present, also once the match is over (the CLI needs it to render)
             "match": {
                 "status": self.status,
+                "paused": self.paused,
                 "hand": self.hand.number if self.hand else None,
                 "hands_total": len(self.plans),
                 "seats": list(self.cfg.seats),
@@ -971,7 +1084,7 @@ class Match:
         """Enforce the turn timeout: check if free, otherwise fold."""
         with self.cond:
             hand = self.hand
-            if self.status != "running" or hand is None or hand.actor is None:
+            if self.status != "running" or self.paused or hand is None or hand.actor is None:
                 return
             remaining = self._deadline()
             if remaining is None or remaining > 0:
@@ -994,6 +1107,9 @@ class Match:
             out: dict = {
                 "revision": ENGINE_REVISION,
                 "status": self.status,
+                "start": self.cfg.start,
+                "paused": self.paused,
+                "turn_timeout": self.cfg.turn_timeout,
                 "seats": list(self.cfg.seats),
                 "labels": self.labels(),
                 "joined": sorted(self.joined),
@@ -1019,6 +1135,7 @@ class Match:
                     "board": hand.board(),
                     "pot": hand.pot(),
                     "actor": hand.actor,
+                    "blinds": list(hand.blinds),
                     "seats": {
                         seat: {"position": hand.position(seat), "stack": hand.stack(seat), "bet": hand.bet(seat),
                                "status": hand.status_of(seat)}

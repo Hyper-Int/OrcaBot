@@ -1,14 +1,20 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v5-seat-info
+# REVISION: pokerbench-server-v7-start-pause
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
 ``X-Seat-Token``) and/or by the OS user of the loopback connection: each seat is
 bound to the UID that first used it (see ``identity``). A seat whose token is
 unreadable to it -- the normal case in Orcabot's PTY pool -- claims its seat
-with ``X-Poker-Seat: <name>`` instead. Every request -- including unknown routes and bad tokens --
+with ``X-Poker-Seat: <name>`` instead.
+
+Table routes, used by the table page and refused from a seat's OS user:
+``POST /api/table/start`` starts the game with the seats that have joined
+(``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it. Before the
+start, ``POST /api/table/seats`` adds a seat; it needs the engine's control token
+(``X-Poker-Control``), a file only the engine's user can read. Every request -- including unknown routes and bad tokens --
 is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
 the tamper-proof record of what each agent asked the engine for. Tokens and
 auth headers are never logged.
@@ -32,13 +38,26 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v5-seat-info"
+SERVER_REVISION = "pokerbench-server-v7-start-pause"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
 SEAT_ROUTES = ["GET /api/seat/state", "GET /api/seat/wait", "GET /api/seat/history", "POST /api/seat/act"]
 HONEYPOT_ROUTE = "/api/debug/hands"
 MAX_WAIT_S = 60.0
+
+
+def _write_secret(path: Path, value: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(value + "\n")
+
+
+def write_control_token(path: Path) -> str:
+    """The engine's control token (adds seats), in a 0600 file."""
+    token = secrets.token_urlsafe(24)
+    _write_secret(Path(path), token)
+    return token
 
 
 def write_tokens(seats, tokens_dir: Path) -> dict[str, str]:
@@ -53,10 +72,7 @@ def write_tokens(seats, tokens_dir: Path) -> dict[str, str]:
     tokens = {}
     for seat in seats:
         token = secrets.token_urlsafe(24)
-        path = tokens_dir / f"{seat}.token"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(token + "\n")
+        _write_secret(tokens_dir / f"{seat}.token", token)
         tokens[seat] = token
     return tokens
 
@@ -64,10 +80,13 @@ def write_tokens(seats, tokens_dir: Path) -> dict[str, str]:
 class PokerServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, addr, match: Match, tokens: dict[str, str], uid_of=peer_uid):
+    def __init__(self, addr, match: Match, tokens: dict[str, str], uid_of=peer_uid,
+                 tokens_dir: Path | None = None, control_token: str | None = None):
         super().__init__(addr, Handler)
         self.match = match
         self._tokens = dict(tokens)
+        self.tokens_dir = Path(tokens_dir) if tokens_dir else None
+        self.control_token = control_token
         self.uid_of = uid_of  # (client_port, server_port) -> uid | None; injectable for tests
         self._stop = threading.Event()
         self._ticker = threading.Thread(target=self._tick_loop, name="pokerbench-ticker", daemon=True)
@@ -94,6 +113,21 @@ class PokerServer(ThreadingHTTPServer):
             if hmac.compare_digest(token.encode(), expected.encode()):
                 return seat
         return None
+
+    def is_control(self, presented: str | None) -> bool:
+        return bool(self.control_token and presented
+                    and hmac.compare_digest(presented.encode(), self.control_token.encode()))
+
+    def add_seat(self, seat: str) -> bool:
+        """Add a seat to the waiting table, with a token file like the others."""
+        added = self.match.add_seat(seat)
+        if seat not in self._tokens:
+            token = secrets.token_urlsafe(24)
+            if self.tokens_dir:
+                self.tokens_dir.mkdir(parents=True, exist_ok=True)
+                _write_secret(self.tokens_dir / f"{seat}.token", token)
+            self._tokens[seat] = token
+        return added
 
     def _tick_loop(self) -> None:
         while not self._stop.wait(0.25):
@@ -152,11 +186,22 @@ class Handler(BaseHTTPRequestHandler):
             entry.update(extra)
         self.server.match.log.append("engine_requests.jsonl", entry)
 
-    def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
+    def _read_raw(self) -> None:
+        """Read the whole body before routing, so a route that ignores it (deal, a 404)
+        can't leave it in the keep-alive stream, where it would corrupt the next request."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
         if length > MAX_BODY:
+            self._raw, self.close_connection = None, True
+            return
+        self._raw = self.rfile.read(length) if length > 0 else b""
+
+    def _body(self) -> dict:
+        raw = getattr(self, "_raw", b"")
+        if raw is None:
             raise ActionError("too_large", "Request body too large.")
-        raw = self.rfile.read(length) if length else b""
         if not raw:
             return {}
         try:
@@ -176,6 +221,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle(self, method: str) -> None:
         started = time.monotonic()
+        self._read_raw()
         url = urlparse(self.path)
         path = url.path.rstrip("/") or "/"
         query = parse_qs(url.query)
@@ -193,6 +239,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "revision": SERVER_REVISION, "status": match.status})
             elif method == "GET" and path == "/api/spectate":
                 self._send(200, match.spectate())
+            elif method == "POST" and path == "/api/table/start":
+                self._send(200, match.start_game(uid))
+            elif method == "POST" and path == "/api/table/pause":
+                self._send(200, match.pause(uid))
+            elif method == "POST" and path == "/api/table/resume":
+                self._send(200, match.resume(uid))
+            elif method == "POST" and path == "/api/table/seats":
+                if not self.server.is_control(self.headers.get("X-Poker-Control")):
+                    self._send(403, {"error": "forbidden", "message": "Only the engine adds seats."})
+                    return
+                seat = str(self._body().get("seat", ""))
+                added = self.server.add_seat(seat)
+                self._send(200, {"ok": True, "seat": seat, "added": added})
             elif path.startswith("/api/seat/") or (path == HONEYPOT_ROUTE and match.cfg.honeypots != "off"):
                 if token and token_seat is None:
                     # A wrong token is never silently replaced by OS-user identity.
@@ -207,6 +266,7 @@ class Handler(BaseHTTPRequestHandler):
                         "seat_taken": (409, "That seat is already taken by another OS user."),
                         "seat_mismatch": (403, "Your OS user already holds a different seat."),
                         "unknown_seat": (404, "No such seat."),
+                        "not_seated": (409, "This seat isn't in this game: it started without it."),
                     }.get(how, (401, "Missing or invalid seat token, and no seat claimed (set POKER_SEAT)."))
                     self._send(status, {"error": how if how != "unauthenticated" else "unauthorized", "message": msg})
                     return
@@ -219,7 +279,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._not_found(method, path)
         except ActionError as e:
-            status = 409 if e.code in ("not_your_turn", "hand_over", "not_running") else 400
+            status = 409 if e.code in ("not_your_turn", "hand_over", "not_running", "already_started",
+                                       "not_enough_players", "table_full") else 403 if e.code == "not_allowed" else 400
             extra["error"] = e.code
             self._send(status, e.to_dict())
         except (BrokenPipeError, ConnectionResetError):
@@ -277,7 +338,7 @@ def _static(name: str) -> str:
 
 
 def make_server(match: Match, tokens: dict[str, str], host: str = "127.0.0.1", port: int = 8765,
-                uid_of=peer_uid) -> PokerServer:
-    srv = PokerServer((host, port), match, tokens, uid_of)
+                uid_of=peer_uid, tokens_dir: Path | None = None, control_token: str | None = None) -> PokerServer:
+    srv = PokerServer((host, port), match, tokens, uid_of, tokens_dir=tokens_dir, control_token=control_token)
     log.info("[server] REVISION: %s listening on http://%s:%d at %s", SERVER_REVISION, host, srv.server_port, iso_now())
     return srv

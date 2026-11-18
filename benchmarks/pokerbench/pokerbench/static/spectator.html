@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v4-seat-labels -->
+<!-- REVISION: pokerbench-spectator-v6-start-pause -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -8,177 +8,406 @@
 <title>PokerBench</title>
 <style>
   :root {
-    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
-    --felt: #1f6b4a; --felt-ink: #f3f7f4; --accent: #c8841a; --red: #c0392b; --black: #1d1d1b;
-    --card: #ffffff; --good: #1f7a4d; --bad: #b3362b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a94; --line: #2e2d2a;
-      --felt: #174d37; --felt-ink: #e8f1ec; --accent: #e3a43c; --red: #e0675a; --black: #1d1d1b;
-      --card: #f4f3ef; --good: #4cc38a; --bad: #e0675a;
-    }
+    --room: #0e1512; --room2: #15201b; --ink: #eef2ee; --muted: #93a39a; --line: #26342d;
+    --felt: #17734f; --felt-dark: #0d4a32; --rail: #3a2416; --rail-hi: #6b4428;
+    --gold: #f2c14e; --red: #d6453b; --good: #5fd39a; --bad: #ff7d6e;
+    --card: #fbfaf6; --card-ink: #1b1b1b; --card-red: #c62f25;
+    --seat: rgba(10, 18, 15, .88); --seat-line: rgba(255,255,255,.14);
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
-  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  h1 { font-size: 18px; margin: 0; }
-  .muted { color: var(--muted); }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-  .table { background: var(--felt); color: var(--felt-ink); border-radius: 14px; padding: 16px;
-           display: grid; gap: 14px; }
-  .seats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-  .seat { border: 1px solid rgba(255,255,255,.18); border-radius: 10px; padding: 10px 12px; }
-  .seat.acting { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
-  .seat .name { font-weight: 600; font-size: 15px; }
-  .seat .meta { opacity: .85; font-size: 12.5px; }
-  .center { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; min-height: 74px; }
-  .cards { display: flex; gap: 6px; }
-  .c { width: 40px; height: 56px; border-radius: 6px; background: var(--card); color: var(--black);
-       display: flex; flex-direction: column; align-items: center; justify-content: center;
-       font-weight: 700; font-size: 16px; line-height: 1; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
-  .c.red { color: var(--red); }
-  .c.back { background: repeating-linear-gradient(45deg, #2b5c8a 0 6px, #24507a 6px 12px); }
-  .c small { font-size: 15px; }
-  .pot { font-size: 15px; font-weight: 600; }
-  .log { font-size: 12.5px; opacity: .92; }
-  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  html, body { margin: 0; background: radial-gradient(ellipse at 50% 0%, var(--room2), var(--room) 70%); color: var(--ink);
+               font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 24px; display: grid; gap: 14px; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; letter-spacing: .04em; margin: 0; }
+  header .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+  .pill.warn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+
+  /* ---- the table ---- */
+  .stage { container-type: inline-size; position: relative; width: 100%; aspect-ratio: 16 / 9.4; min-height: 300px; }
+  .rail { position: absolute; inset: 9% 7% 11%; border-radius: 50% / 50%;
+          background: linear-gradient(180deg, var(--rail-hi), var(--rail) 60%);
+          box-shadow: 0 24px 60px rgba(0,0,0,.55), inset 0 2px 0 rgba(255,255,255,.12); }
+  .felt { position: absolute; inset: 3.2cqw; border-radius: 50% / 50%;
+          background: radial-gradient(ellipse at 50% 40%, var(--felt), var(--felt-dark) 85%);
+          box-shadow: inset 0 0 0 .25cqw rgba(255,255,255,.08), inset 0 10px 40px rgba(0,0,0,.45); }
+  .felt::after { content: "POKERBENCH"; position: absolute; left: 50%; top: 70%; transform: translate(-50%, -50%);
+                 font-weight: 800; letter-spacing: .5em; font-size: 1.5cqw; color: rgba(255,255,255,.08); }
+  .center { position: absolute; left: 50%; top: 47%; transform: translate(-50%, -50%);
+            display: flex; flex-direction: column; align-items: center; gap: 1cqw; text-align: center; width: 60%; }
+  .board { display: flex; gap: .7cqw; min-height: 7.6cqw; }
+  .slot { width: 5.3cqw; height: 7.6cqw; border-radius: .6cqw; border: .15cqw dashed rgba(255,255,255,.16); }
+  .pot { font-weight: 700; font-size: 1.7cqw; display: flex; align-items: center; gap: .6cqw; }
+  .street { font-size: 1.15cqw; color: rgba(255,255,255,.7); text-transform: uppercase; letter-spacing: .12em; }
+  .message { font-size: 1.45cqw; color: rgba(255,255,255,.9); max-width: 100%; }
+  .message small { display: block; font-size: 1.15cqw; color: rgba(255,255,255,.65); margin-top: .4cqw; }
+  .big { font: inherit; font-size: 1.7cqw; font-weight: 800; letter-spacing: .08em; color: #2a1a05; cursor: pointer;
+          background: linear-gradient(180deg, #ffd978, var(--gold)); border: 0; border-radius: 999px; padding: .9cqw 3.2cqw;
+          box-shadow: 0 .4cqw 0 #a87a1c, 0 .8cqw 2cqw rgba(0,0,0,.4); }
+  .big:disabled { filter: grayscale(.8) brightness(.7); cursor: default; }
+  .big:not(:disabled):hover { filter: brightness(1.06); }
+  .paused-tag { font-weight: 800; letter-spacing: .3em; font-size: 1.5cqw; color: var(--gold); }
+  .ctl { font: inherit; font-size: 12.5px; font-weight: 700; padding: 4px 14px; border-radius: 999px; cursor: pointer;
+         border: 1px solid color-mix(in srgb, var(--gold) 60%, transparent); background: transparent; color: var(--gold); }
+  .ctl:hover { background: rgba(242,193,78,.12); }
+  .ctl:disabled { opacity: .5; cursor: default; }
+  .stage.is-paused .felt { filter: saturate(.55) brightness(.8); }
+  .error { color: #ffd1cb; font-size: 1.15cqw; }
+
+  /* cards */
+  .c { width: 5.3cqw; height: 7.6cqw; border-radius: .6cqw; background: var(--card); color: var(--card-ink);
+       display: flex; flex-direction: column; justify-content: center; align-items: center; line-height: 1;
+       font-weight: 800; font-size: 2.3cqw; box-shadow: 0 .25cqw .6cqw rgba(0,0,0,.45); position: relative; }
+  .c .s { font-size: 2.1cqw; margin-top: .15cqw; }
+  .c.red { color: var(--card-red); }
+  .c.back { background: repeating-linear-gradient(45deg, #b8322b 0 .5cqw, #9c2721 .5cqw 1cqw);
+            border: .3cqw solid #fff; }
+  .c.sm { width: 3.6cqw; height: 5.1cqw; font-size: 1.6cqw; border-radius: .45cqw; }
+  .c.sm .s { font-size: 1.75cqw; }
+  .c.sm.back { border-width: .22cqw; }
+  .c.dim { opacity: .35; }
+
+  /* seats */
+  .seat { position: absolute; transform: translate(-50%, -50%); width: 15cqw; display: flex; flex-direction: column;
+          align-items: center; gap: .3cqw; transition: opacity .3s; }
+  .seat .hole { display: flex; gap: .3cqw; height: 5.1cqw; margin-bottom: -1.6cqw; z-index: 1; }
+  .plate { width: 100%; background: var(--seat); border: .15cqw solid var(--seat-line); border-radius: 1.2cqw;
+           padding: .55cqw .8cqw; text-align: center; position: relative; backdrop-filter: blur(4px); z-index: 2; }
+  .plate .name { font-weight: 700; font-size: 1.35cqw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plate .label { font-size: 1.0cqw; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plate .stack { font-size: 1.3cqw; font-weight: 700; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .plate .state { font-size: 1.05cqw; color: var(--muted); }
+  .seat.acting .plate { border-color: var(--gold); box-shadow: 0 0 0 .2cqw var(--gold), 0 0 2cqw rgba(242,193,78,.45); }
+  .seat.folded, .seat.out, .seat.away { opacity: .45; }
+  .seat.ready .plate { border-color: color-mix(in srgb, var(--good) 70%, transparent); }
+  .seat.winner .plate { border-color: var(--good); box-shadow: 0 0 0 .2cqw var(--good), 0 0 2cqw rgba(95,211,154,.45); }
+  .timer { position: absolute; left: 0; bottom: 0; height: .3cqw; background: var(--gold); border-radius: 0 0 1.2cqw 1.2cqw;
+           transition: width 1s linear; }
+  .tag { display: inline-block; font-size: .95cqw; font-weight: 700; padding: .1cqw .55cqw; border-radius: 999px; margin-top: .2cqw; }
+  .tag.ready { background: rgba(95,211,154,.18); color: var(--good); }
+  .tag.wait { background: rgba(255,255,255,.08); color: var(--muted); }
+  .tag.allin { background: rgba(214,69,59,.25); color: #ffb3aa; }
+  .tag.net-pos { background: rgba(95,211,154,.2); color: var(--good); }
+  .tag.net-neg { background: rgba(255,125,110,.18); color: var(--bad); }
+  .bubble { position: absolute; top: -1.4cqw; right: -1cqw; font-size: 1.0cqw; font-weight: 700; padding: .2cqw .6cqw;
+            border-radius: .8cqw; background: #f4f1e8; color: #222; white-space: nowrap; z-index: 3;
+            box-shadow: 0 .2cqw .6cqw rgba(0,0,0,.35); }
+  .btn { position: absolute; width: 2.2cqw; height: 2.2cqw; border-radius: 50%; display: grid; place-items: center;
+         font-size: 1.0cqw; font-weight: 800; transform: translate(-50%, -50%); box-shadow: 0 .15cqw .4cqw rgba(0,0,0,.5); }
+  .btn.d { background: #fff; color: #111; }
+  .btn.sb { background: #5b8def; color: #fff; }
+  .btn.bb { background: #f2c14e; color: #2a1a05; }
+  .bet { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: .4cqw;
+         font-weight: 700; font-size: 1.15cqw; font-variant-numeric: tabular-nums; }
+  .chip { width: 1.7cqw; height: 1.7cqw; border-radius: 50%; border: .35cqw dashed #fff; background: var(--red);
+          box-shadow: 0 .15cqw .3cqw rgba(0,0,0,.5); flex: none; }
+  .chip.blue { background: #2f6bd8; } .chip.gold { background: #d79a1c; }
+
+  /* panels */
+  .panels { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; }
+  .panel { background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .panel h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
   th, td { text-align: right; padding: 5px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  .pos { color: var(--good); } .neg { color: var(--bad); }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+  .pos { color: var(--good); } .neg { color: var(--bad); } .muted { color: var(--muted); }
   .scroll { overflow-x: auto; }
-  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
-  .badge.ok { color: var(--good); border-color: var(--good); }
-  .badge.warn { color: var(--bad); border-color: var(--bad); }
-  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } .seats { grid-template-columns: repeat(2, 1fr); } }
+  .feed { display: grid; gap: 4px; font-size: 13px; max-height: 220px; overflow-y: auto; }
+  .feed .st { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
+  @media (max-width: 720px) { .panels { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>PokerBench</h1>
-    <span id="status" class="muted">connecting…</span>
-    <span id="isolation" class="badge" hidden></span>
+    <h1>♠ PokerBench</h1>
+    <span id="status" class="pill">connecting…</span>
+    <span id="blinds" class="pill" hidden></span>
+    <span class="spacer"></span>
+    <span id="isolation" class="pill" hidden></span>
+    <button id="control" class="ctl" hidden></button>
   </header>
 
-  <section class="table" aria-label="Live table">
-    <div class="seats" id="seats"></div>
-    <div class="center">
-      <div class="cards" id="board"></div>
-      <div class="pot" id="pot"></div>
-    </div>
-    <div class="log" id="log"></div>
+  <section class="stage" id="stage" aria-label="Poker table">
+    <div class="rail"><div class="felt"></div></div>
+    <div id="layer"></div>
+    <div class="center" id="center"></div>
   </section>
 
-  <div class="grid2">
+  <div class="panels">
+    <section class="panel">
+      <h2 id="feed-title">This hand</h2>
+      <div class="feed" id="feed"><span class="muted">No hand yet.</span></div>
+    </section>
     <section class="panel scroll">
       <h2>Leaderboard</h2>
       <table id="leaderboard"></table>
     </section>
-    <section class="panel">
-      <h2>Last hand</h2>
-      <div id="last" class="muted">No hands finished yet.</div>
-    </section>
   </div>
-
   <section class="panel scroll">
     <h2>Recent hands</h2>
     <table id="recent"></table>
   </section>
 </main>
 <script>
+// REVISION: pokerbench-spectator-v6-start-pause
+console.log(`[spectator] REVISION: pokerbench-spectator-v6-start-pause loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
+const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
-const signed = (n) => `<span class="${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n > 0 ? "+" : ""}${n}</span>`;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const num = (n) => Number(n).toLocaleString("en-US");
+const signed = (n) => `<span class="${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n > 0 ? "+" : ""}${num(n)}</span>`;
 
-function card(code) {
-  if (!code) return `<div class="c back" aria-label="hidden card"></div>`;
+let state = null;
+let shownHand = null;       // the last finished hand number we have displayed
+let showdown = null;        // {hand, until}: a finished hand held on the table for a moment
+let controlError = "";
+let busy = false;           // a Start / Pause / Resume request is in flight
+
+function card(code, cls = "") {
+  if (code === undefined) return `<div class="slot"></div>`;
+  if (!code) return `<div class="c back ${cls}" aria-label="face-down card"></div>`;
   const rank = code[0] === "T" ? "10" : code[0];
   const suit = code[1];
   const red = suit === "h" || suit === "d";
-  return `<div class="c ${red ? "red" : ""}" aria-label="${esc(code)}">${esc(rank)}<small>${SUITS[suit] || esc(suit)}</small></div>`;
+  return `<div class="c ${red ? "red" : ""} ${cls}" aria-label="${esc(code)}">${esc(rank)}<span class="s">${SUITS[suit] || esc(suit)}</span></div>`;
 }
 
-function fmtAction(a) {
-  if (a.action === "bet" || a.action === "raise") return `${esc(a.seat)} ${a.action} to ${a.to}${a.allin ? " (all-in)" : ""}`;
-  if (a.action === "call") return `${esc(a.seat)} call ${a.amount}`;
-  return `${esc(a.seat)} ${a.action}`;
+function actionText(a) {
+  if (!a) return "";
+  if (a.action === "bet" || a.action === "raise") return `${a.action} ${num(a.to)}${a.allin ? " · all-in" : ""}`;
+  if (a.action === "call") return `call ${num(a.amount)}`;
+  return a.action;
 }
 
-function render(s) {
+// Seat i of n, clockwise from the bottom centre, on an ellipse a little outside the felt.
+function seatPoint(i, n) {
+  const t = Math.PI / 2 + (2 * Math.PI * i) / n;
+  return { x: 50 + 45 * Math.cos(t), y: 48 + 41 * Math.sin(t), t };
+}
+const toward = (p, k) => ({ x: p.x + (50 - p.x) * k, y: p.y + (47 - p.y) * k });
+
+function badgeFor(position) {
+  if (!position) return null;
+  if (position.startsWith("button")) return ["d", "D"];
+  if (position === "small blind") return ["sb", "SB"];
+  if (position === "big blind") return ["bb", "BB"];
+  return null;
+}
+
+function render() {
+  const s = state;
+  if (!s) return;
   const live = s.live;
-  el("status").textContent = s.status === "running"
-    ? `hand ${s.hand} of ${s.hands_total}`
-    : s.status === "finished" ? `finished · ${s.hands_total} hands`
-    : `waiting for players (${s.joined.length}/${s.seats.length} joined)`;
+  const now = Date.now();
+  const sd = showdown && showdown.until > now ? showdown.hand : null;
+  const lobby = s.status === "waiting_for_players";
+  const n = s.seats.length;
 
-  el("seats").innerHTML = s.seats.map((seat) => {
-    const info = live ? live.seats[seat] : null;
-    const acting = live && live.actor === seat;
-    const chips = s.tournament ? s.tournament.chips[seat] : null;
-    const out = s.tournament && chips === 0;
-    const meta = out ? "eliminated"
-      : info ? `${esc(info.position)} · stack ${info.stack} · bet ${info.bet}${info.status && info.status !== "in" ? ` · ${esc(info.status)}` : ""}`
-      : (s.joined.includes(seat) ? "joined" : "not joined");
-    return `<div class="seat ${acting ? "acting" : ""}">
-      <div class="name">${esc(seat)}${acting && live.seconds_left != null ? ` · ${Math.ceil(live.seconds_left)}s` : ""}</div>
-      ${s.labels && s.labels[seat] ? `<div class="meta">${esc(s.labels[seat])}</div>` : ""}
-      <div class="cards" style="margin:6px 0">${info && info.status !== "folded" ? card(null) + card(null) : ""}</div>
-      <div class="meta">${meta}</div>
-    </div>`;
-  }).join("");
-
-  el("board").innerHTML = live ? live.board.map(card).join("") : "";
-  el("pot").textContent = live ? `Pot ${live.pot} · ${live.street}` : "";
-  el("log").innerHTML = live && live.actions.length
-    ? live.actions.map((a) => `[${a.street}] ${fmtAction(a)}`).join(" · ")
-    : "";
-
+  // header
+  el("status").textContent = lobby ? `waiting for players · ${s.joined.length} of ${n} ready`
+    : s.status === "running" ? `hand ${s.hand} of ${s.hands_total}${s.paused ? " · paused" : ""}`
+    : s.status === "finished" ? `game over · ${s.recent.length ? s.recent[s.recent.length - 1].hand : 0} hands` : s.status;
+  const blinds = live ? live.blinds : null;
+  el("blinds").hidden = !blinds;
+  if (blinds) el("blinds").textContent = `blinds ${num(blinds[0])}/${num(blinds[1])}` +
+    (s.tournament ? ` · level ${s.tournament.level}` : "");
   const iso = s.isolation, badge = el("isolation");
-  if (iso && s.joined.length === s.seats.length) {
-    badge.hidden = false;
-    badge.className = `badge ${iso.enforced ? "ok" : "warn"}`;
-    badge.textContent = iso.enforced ? "seat isolation enforced" : "seat isolation NOT enforced";
+  badge.hidden = lobby || !iso;
+  if (iso && !lobby) {
+    badge.className = `pill ${iso.enforced ? "ok" : "warn"}`;
+    badge.textContent = iso.enforced ? "seats isolated" : "seats not isolated";
     badge.title = iso.enforced ? `engine uid ${iso.engine_uid}` : iso.problems.join("; ");
   }
 
-  const lb = s.leaderboard;
-  el("leaderboard").innerHTML = `<tr><th>Seat</th><th>Net</th><th>bb/100</th><th>Dup bb/100 ± CI</th><th>Timeouts</th><th>Invalid</th></tr>` +
-    lb.map((r) => `<tr><td>${esc(r.seat)}</td><td>${signed(r.net_chips)}</td><td>${r.bb_per_100 ?? "–"}</td>
-      <td>${r.dup_bb_per_100 ?? "–"}${r.dup_ci95 != null ? ` ± ${r.dup_ci95}` : ""}</td>
-      <td>${s.counters[r.seat].timeouts}</td><td>${s.counters[r.seat].invalid}</td></tr>`).join("");
+  // seats, bets, buttons
+  const lastBySeat = {};
+  if (live && !sd) for (const a of live.actions) if (a.street === live.street) lastBySeat[a.seat] = a;
+  let layer = "";
+  s.seats.forEach((seat, i) => {
+    const p = seatPoint(i, n);
+    const info = live && !sd ? live.seats[seat] : null;
+    const chips = s.tournament ? s.tournament.chips[seat] : null;
+    const out = s.tournament && chips === 0 && !lobby;
+    const inShow = sd && sd.players.includes(seat);
+    let cls = "seat", hole = "", stack = "", st = "", extra = "";
+    if (lobby) {
+      const ready = s.joined.includes(seat);
+      cls += ready ? " ready" : " away";
+      st = ready ? `<span class="tag ready">ready</span>` : `<span class="tag wait">not here yet</span>`;
+    } else if (inShow) {
+      const cards = sd.hole[seat];
+      const folded = (sd.folded || []).includes(seat);
+      hole = cards ? cards.map((c) => card(c, "sm")).join("") : (folded ? "" : card(null, "sm") + card(null, "sm"));
+      stack = num(sd.end_stacks[seat]);
+      const net = sd.net[seat];
+      if (net > 0) cls += " winner";
+      if (folded) cls += " folded";
+      st = `<span class="tag ${net > 0 ? "net-pos" : net < 0 ? "net-neg" : "wait"}">${net > 0 ? "+" : ""}${num(net)}</span>`;
+    } else if (info) {
+      if (info.status === "folded") cls += " folded";
+      else hole = card(null, "sm") + card(null, "sm");
+      if (live.actor === seat) {
+        cls += " acting";
+        const left = live.seconds_left ?? 0;
+        const total = s.turn_timeout || 0;
+        extra += `<div class="timer" style="width:${total ? Math.max(0, Math.min(100, (left / total) * 100)) : 0}%"></div>`;
+      }
+      stack = num(info.stack);
+      st = info.status === "all in" ? `<span class="tag allin">ALL IN</span>`
+        : live.actor === seat ? `<span class="state">${s.paused ? "paused" : "thinking…"} ${Math.ceil(live.seconds_left ?? 0)}s</span>`
+        : info.status === "folded" ? `<span class="state">folded</span>` : "";
+      const b = badgeFor(info.position);
+      if (b) {
+        const q = toward(p, 0.3);
+        const off = 4.5;
+        layer += `<div class="btn ${b[0]}" style="left:${q.x + off * Math.cos(p.t + Math.PI / 2)}%;top:${q.y + off * 0.9 * Math.sin(p.t + Math.PI / 2)}%">${b[1]}</div>`;
+      }
+      if (info.bet > 0) {
+        const q = toward(p, 0.42);
+        const color = info.bet >= 1000 ? "gold" : info.bet >= 300 ? "blue" : "";
+        layer += `<div class="bet" style="left:${q.x}%;top:${q.y}%"><span class="chip ${color}"></span>${num(info.bet)}</div>`;
+      }
+    } else if (out) {
+      cls += " out";
+      st = `<span class="state">out</span>`;
+    } else if (chips != null) {
+      stack = num(chips);
+    } else if (s.status === "finished") {
+      cls += "";
+    } else {
+      cls += " away";
+      st = `<span class="state">sitting out</span>`;
+    }
+    const bubble = lastBySeat[seat] && live.actor !== seat ? `<div class="bubble">${esc(actionText(lastBySeat[seat]))}</div>` : "";
+    layer += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%">
+      <div class="hole">${hole}</div>
+      <div class="plate">${bubble}
+        <div class="name" title="${esc(seat)}">${esc(seat)}</div>
+        ${s.labels && s.labels[seat] ? `<div class="label" title="${esc(s.labels[seat])}">${esc(s.labels[seat])}</div>` : ""}
+        ${stack ? `<div class="stack">${stack}</div>` : ""}
+        ${st}${extra}
+      </div></div>`;
+  });
+  el("layer").innerHTML = layer;
 
-  const h = s.last_hand;
-  if (h) {
-    el("last").innerHTML = `<div style="margin-bottom:6px">Hand ${h.hand} (deal ${h.deal}${h.mirror ? ", mirror" : ""}) · ${h.showdown ? "showdown" : "no showdown"}</div>` +
-      h.players.map((seat) => `<div style="display:flex;align-items:center;gap:10px;margin:4px 0">
-        <div class="cards">${(h.hole[seat] || [null, null]).map(card).join("")}</div>
-        <div><b>${esc(seat)}</b> ${signed(h.net[seat])}<div class="muted" style="font-size:12px">${esc(h.positions[seat])}</div></div></div>`).join("") +
-      `<div class="cards" style="margin:6px 0">${h.board.map(card).join("")}</div>` +
-      `<div class="muted" style="font-size:12.5px">${h.actions.map((a) => `[${a.street}] ${fmtAction(a)}`).join(" · ")}</div>`;
+  // centre
+  let center = "";
+  if (lobby) {
+    const ready = s.joined.length;
+    if (s.start === "manual") {
+      center = `<div class="message">${ready >= 2 ? `${ready} players are ready.` : ready === 1 ? "1 player is ready. A game needs at least 2." : "Waiting for players to sit down."}
+        <small>Seats appear as their terminals and Agent blocks check in. Start begins the game with the players who are ready.</small></div>
+        <button class="big" data-action="start" ${ready >= 2 && !busy ? "" : "disabled"}>${busy ? "STARTING…" : "START"}</button>`;
+    } else {
+      center = `<div class="message">Waiting for every seat to be ready.<small>The game starts by itself once all ${n} have checked in.</small></div>`;
+    }
+  } else if (sd) {
+    const winners = sd.players.filter((x) => sd.net[x] > 0);
+    const pot = Object.values(sd.net).filter((v) => v > 0).reduce((a, b) => a + b, 0);
+    center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(sd.board[k])).join("")}</div>
+      <div class="message">${winners.map(esc).join(" & ") || "Split"} ${winners.length === 1 ? "wins" : "win"} ${num(pot)}
+      <small>hand ${sd.hand} · ${sd.showdown ? "showdown" : "everyone else folded"}</small></div>`;
+  } else if (live && s.paused) {
+    center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(live.board[k])).join("")}</div>
+      <div class="paused-tag">PAUSED</div>
+      <button class="big" data-action="resume" ${busy ? "disabled" : ""}>RESUME</button>`;
+  } else if (live) {
+    center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(live.board[k])).join("")}</div>
+      <div class="pot"><span class="chip gold"></span>Pot ${num(live.pot)}</div>
+      <div class="street">${esc(live.street)}</div>`;
+  } else if (s.status === "finished") {
+    const standings = s.tournament && s.tournament.chips
+      ? Object.entries(s.tournament.chips).sort((a, b) => b[1] - a[1])
+      : s.leaderboard.map((r) => [r.seat, r.net_chips]);
+    const top = standings.length ? standings[0][0] : null;
+    center = `<div class="message">Game over${top ? ` · ${esc(top)} wins` : ""}
+      <small>Full report: /workspace/pokerbench-results/ (the engine terminal prints it too).</small></div>`;
+  }
+  if (controlError) center += `<div class="error">${esc(controlError)}</div>`;
+  el("center").innerHTML = center;
+  el("center").querySelectorAll("[data-action]").forEach((b) => { b.onclick = () => control(b.dataset.action); });
+  el("stage").classList.toggle("is-paused", Boolean(s.paused && s.status === "running"));
+
+  // Pause / Resume in the header while the game runs.
+  const ctl = el("control");
+  ctl.hidden = s.status !== "running";
+  ctl.textContent = s.paused ? "Resume" : "Pause";
+  ctl.disabled = busy;
+  ctl.onclick = () => control(s.paused ? "resume" : "pause");
+
+  // this hand's actions
+  const feedHand = sd || (live ? { actions: live.actions, hand: s.hand } : s.last_hand);
+  el("feed-title").textContent = feedHand ? `Hand ${feedHand.hand}` : "This hand";
+  if (feedHand && feedHand.actions && feedHand.actions.length) {
+    let street = "", rows = [];
+    for (const a of feedHand.actions) {
+      if (a.street !== street) { street = a.street; rows.push(`<div class="st">${esc(street)}</div>`); }
+      rows.push(`<div><b>${esc(a.seat)}</b> ${esc(actionText(a))}</div>`);
+    }
+    el("feed").innerHTML = rows.join("");
+    el("feed").scrollTop = el("feed").scrollHeight;
+  } else {
+    el("feed").innerHTML = `<span class="muted">${lobby ? "The game hasn't started." : "No actions yet."}</span>`;
   }
 
-  el("recent").innerHTML = `<tr><th>Hand</th><th>Deal</th>${s.seats.map((x) => `<th>${esc(x)}</th>`).join("")}<th>Showdown</th></tr>` +
-    s.recent.slice().reverse().map((r) => `<tr><td>${r.hand}</td><td>${r.deal}${r.mirror ? "′" : ""}</td>
-      ${s.seats.map((x) => `<td>${r.net[x] == null ? "–" : signed(r.net[x])}</td>`).join("")}<td>${r.showdown ? "yes" : "–"}</td></tr>`).join("");
+  // leaderboard
+  const c = s.counters || {};
+  // Tournament: chips decide it. Cash: big blinds won per 100 hands.
+  const rows = s.tournament
+    ? s.leaderboard.slice().sort((a, b) => (s.tournament.chips[b.seat] ?? 0) - (s.tournament.chips[a.seat] ?? 0))
+    : s.leaderboard;
+  const misses = (seat) => { const k = c[seat] || {}; const t = (k.timeouts || 0) + (k.invalid || 0); return t ? t : "–"; };
+  el("leaderboard").innerHTML = `<tr><th>Player</th>${s.tournament ? "<th>Chips</th>" : "<th>bb/100</th>"}<th>Net</th><th title="turn timeouts + invalid actions">Misses</th></tr>` +
+    rows.map((r) => `<tr><td>${esc(r.seat)}</td>${s.tournament ? `<td>${num(s.tournament.chips[r.seat] ?? 0)}</td>` : `<td>${r.bb_per_100 ?? "–"}</td>`}
+      <td>${signed(r.net_chips)}</td><td>${misses(r.seat)}</td></tr>`).join("");
+
+  el("recent").innerHTML = s.recent.length
+    ? `<tr><th>Hand</th>${s.seats.map((x) => `<th>${esc(x)}</th>`).join("")}<th>Showdown</th></tr>` +
+      s.recent.slice().reverse().map((r) => `<tr><td>${r.hand}</td>
+        ${s.seats.map((x) => `<td>${r.net[x] == null ? "–" : signed(r.net[x])}</td>`).join("")}<td>${r.showdown ? "yes" : "–"}</td></tr>`).join("")
+    : `<tr><td class="muted">No hands finished yet.</td></tr>`;
 }
 
-async function poll() {
+// Start, pause or resume the game.
+async function control(action) {
+  busy = true; controlError = ""; render();
+  try {
+    const res = await fetch(`/api/table/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) controlError = body.message || `The engine said ${res.status}.`;
+  } catch {
+    controlError = "Couldn't reach the engine.";
+  }
+  busy = false;
+  poll(true);
+}
+
+let timer = null;
+async function poll(once) {
   try {
     const res = await fetch("/api/spectate", { cache: "no-store" });
-    if (res.ok) render(await res.json());
-    else el("status").textContent = `engine error ${res.status}`;
+    if (res.ok) {
+      state = await res.json();
+      const last = state.last_hand;
+      if (last && shownHand !== null && last.hand !== shownHand && state.status !== "waiting_for_players") {
+        showdown = { hand: last, until: Date.now() + SHOWDOWN_MS };
+      }
+      if (last) shownHand = last.hand;
+      render();
+    } else {
+      el("status").textContent = `engine error ${res.status}`;
+    }
   } catch {
-    el("status").textContent = "engine unreachable — retrying";
+    el("status").textContent = "engine not running — start the engine terminal";
   }
-  setTimeout(poll, 1000);
+  if (!once) { clearTimeout(timer); timer = setTimeout(poll, 1000); }
 }
+setInterval(() => { if (showdown && showdown.until <= Date.now()) { showdown = null; render(); } }, 250);
 poll();
 </script>
 </body>

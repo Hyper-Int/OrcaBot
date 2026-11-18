@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v6-seat-info
+# REVISION: pokerbench-cli-v7-paused
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v6-seat-info"
+CLI_REVISION = "pokerbench-cli-v7-paused"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -282,6 +282,8 @@ def render(view: dict) -> str:
     if m["status"] == "waiting_for_players":
         return ("Waiting for players to join: " + ", ".join(view.get("waiting_for", []))
                 + ". Run `poker wait` again.")
+    if m.get("paused") and m["status"] == "running" and not view.get("to_act"):
+        return "The game is paused. Run `poker wait` again; it continues when the game resumes."
     if m["status"] == "finished":
         final = view.get("final", {})
         tour = final.get("tournament")
