@@ -579,6 +579,13 @@ func (h *Hub) WriteSystem(data []byte) (int, error) {
 }
 
 
+// Size is the PTY window size last set (0, 0 if never resized). REVISION: self-input-v2-own-screen
+func (h *Hub) Size() (cols, rows uint16) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.lastCols, h.lastRows
+}
+
 // Resize changes the PTY window size and records the dimensions for replay.
 func (h *Hub) Resize(cols, rows uint16) error {
 	h.mu.Lock()

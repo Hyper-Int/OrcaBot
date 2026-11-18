@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: self-input-v1
+// REVISION: self-input-v2-own-screen
 
 package main
 
@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
@@ -26,7 +27,7 @@ import (
 // terminals and agents through the MCP UI tools); it never reaches another terminal,
 // and every use is logged.
 
-const selfInputRevision = "self-input-v1"
+const selfInputRevision = "self-input-v2-own-screen"
 
 const selfInputMaxBytes = 64 * 1024
 
@@ -98,4 +99,40 @@ func (s *Server) handleSelfInputLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.handleSelfInputForPTY(w, r, session, r.PathValue("ptyId"))
+}
+
+// Own screen: the raw recent output of the caller's own terminal (ANSI intact, the last
+// 64KB), so the caller can render what is on the screen now. The /scrollback route
+// strips the escape codes, which loses the cursor moves an interactive agent's UI is
+// drawn with: text it has since redrawn over (a dialog that was answered) stays in it.
+// Pool mode: /screen on the privileged socket; otherwise MCPLocal
+// GET /sessions/{sessionId}/ptys/{ptyId}/screen. Only ever the caller's own PTY.
+func (s *Server) handleOwnScreenForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "E79995: GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	if session == nil || ptyID == "" {
+		http.Error(w, "E79996: no terminal identity", http.StatusForbidden)
+		return
+	}
+	hub := session.GetHub(ptyID)
+	if hub == nil {
+		http.Error(w, "E79997: PTY not found", http.StatusNotFound)
+		return
+	}
+	cols, rows := hub.Size()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Screen-Cols", strconv.Itoa(int(cols)))
+	w.Header().Set("X-Screen-Rows", strconv.Itoa(int(rows)))
+	w.Write(hub.ScrollbackRaw(64 * 1024))
+}
+
+func (s *Server) handleOwnScreenLocal(w http.ResponseWriter, r *http.Request) {
+	session, err := s.sessions.Get(r.PathValue("sessionId"))
+	if err != nil {
+		http.Error(w, "E79994: session not found", http.StatusNotFound)
+		return
+	}
+	s.handleOwnScreenForPTY(w, r, session, r.PathValue("ptyId"))
 }
