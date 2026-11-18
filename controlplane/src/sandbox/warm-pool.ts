@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: warm-pool-v3-prune-stale-images
-const MODULE_REVISION = 'warm-pool-v3-prune-stale-images';
+// REVISION: warm-pool-v4-prune-other-sizes
+const MODULE_REVISION = 'warm-pool-v4-prune-other-sizes';
 console.log(`[warm-pool] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -100,23 +100,29 @@ export function newestImage(machines: { config?: { image?: string } }[]): string
 }
 
 /**
- * Warm machines that run an image other than `image` (the one new machines get).
+ * Warm machines that run an image other than `image` (the one new machines get), or,
+ * given `guest`, that are another size (CPU kind, CPUs, memory) than new machines.
  *
  * After a deploy, Fly moves machines to the new image gradually, and a warm machine
  * made in that window (or before the deploy) keeps the old one until a dashboard
- * claims it. Machines Fly doesn't list (already gone) or that have no image aren't
- * returned: there's nothing to compare, and the reaper handles the missing.
+ * claims it; likewise a machine made before the VM size changed. Machines Fly doesn't
+ * list (already gone) or that have no image aren't returned: there's nothing to
+ * compare, and the reaper handles the missing.
  */
 export function staleWarmMachines(
   pool: { machine_id: string; volume_id: string }[],
-  machines: { id: string; config?: { image?: string } }[],
+  machines: { id: string; config?: { image?: string; guest?: { cpu_kind?: string; cpus?: number; memory_mb?: number } } }[],
   image: string,
+  guest?: { cpu_kind: string; cpus: number; memory_mb: number },
 ): { machine_id: string; volume_id: string }[] {
   if (!image) return [];
-  const imageOf = new Map(machines.map((m) => [m.id, m.config?.image]));
+  const configOf = new Map(machines.map((m) => [m.id, m.config]));
   return pool.filter((w) => {
-    const current = imageOf.get(w.machine_id);
-    return Boolean(current) && current !== image;
+    const config = configOf.get(w.machine_id);
+    if (!config?.image) return false;
+    if (config.image !== image) return true;
+    const g = config.guest;
+    return Boolean(guest && g && (g.cpu_kind !== guest.cpu_kind || g.cpus !== guest.cpus || g.memory_mb !== guest.memory_mb));
   });
 }
 

@@ -732,13 +732,16 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
     }
 
     // Retire warm machines on another image (made before a deploy, or while it was rolling
-    // out), so no dashboard is handed an old sandbox. Only machines still in the pool: each
-    // is taken out of warm_machines first, and left alone if a dashboard claimed it first.
+    // out) or of another size (made before SANDBOX_GUEST changed), so no dashboard is
+    // handed an old sandbox. Only machines still in the pool: each is taken out of
+    // warm_machines first, and left alone if a dashboard claimed it first.
+    // REVISION: warm-pool-v4-prune-other-sizes
     if (image) {
-      const stale = staleWarmMachines(await listOwnWarmMachines(env.DB, owner), machines, image);
+      const { SANDBOX_GUEST } = await import('./sandbox/fly-machines');
+      const stale = staleWarmMachines(await listOwnWarmMachines(env.DB, owner), machines, image, SANDBOX_GUEST);
       for (const w of stale) {
         if (!(await releaseWarmMachine(env.DB, w.machine_id))) continue;
-        console.log(`[warmPool] Retiring warm machine ${w.machine_id}: not on ${image}`);
+        console.log(`[warmPool] Retiring warm machine ${w.machine_id}: not on ${image} as ${SANDBOX_GUEST.cpu_kind}-${SANDBOX_GUEST.cpus}x`);
         try { await fly.destroyMachine(w.machine_id, true); } catch { /* the reaper retries untracked machines */ }
         try { await fly.deleteVolume(w.volume_id); } catch { /* likewise */ }
       }
