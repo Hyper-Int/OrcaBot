@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-agentlink-v1-agent-blocks
+# REVISION: pokerbench-agentlink-v2-table-timeout
 """Agent seats in Orcabot: an Agent block (an outside agent such as Grok Bot, Muse or
 Dots, linked to the dashboard owner) connected to the table's engine terminal plays
 a seat.
@@ -34,7 +34,7 @@ from collections.abc import Iterator
 from .chatseat import ChatSeat
 from .llm import ProviderError
 
-AGENTLINK_REVISION = "pokerbench-agentlink-v1-agent-blocks"
+AGENTLINK_REVISION = "pokerbench-agentlink-v2-table-timeout"
 PRIVILEGED_SOCK = "/run/orcabot/privileged.sock"
 
 
@@ -107,7 +107,7 @@ class AgentLinkSeat(ChatSeat):
 
     name = "agent"
 
-    def __init__(self, agent: str, reply_timeout: float = 150.0, client: AgentLinkClient | None = None):
+    def __init__(self, agent: str, reply_timeout: float | None = None, client: AgentLinkClient | None = None):
         super().__init__(agent, reply_timeout)
         self.client = client or AgentLinkClient()
         self.after = 0

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pokerbench.bots import play
 from pokerbench.cli import Client
-from pokerbench.engine import ActionError, Match, MatchConfig
+from pokerbench.engine import CONDITIONS, ActionError, Match, MatchConfig
 from pokerbench.server import make_server, write_control_token, write_tokens
 
 
@@ -246,6 +246,151 @@ class LobbyServerTests(unittest.TestCase):
             t.join(30)
         self.assertEqual(self.match.status, "finished")
         self.assertEqual(set(results), {"alice", "bob"})
+
+
+class SettingsTests(unittest.TestCase):
+    """The table page sets the game up before the start (Match.configure)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.m = Match(MatchConfig(seats=("a", "b", "c"), deals=10, seed=3, start="manual", format="tournament",
+                                   duplicate=False), Path(self.tmp.name) / "run")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_change_the_game_and_start_it(self):
+        out = self.m.configure({"format": "cash", "hands": 4, "turn_timeout": 45, "condition": "pressure",
+                                "honeypots": "hidden", "seed": 9})
+        self.assertEqual((out["format"], out["hands"], out["turn_timeout"], out["seed"]), ("cash", 4, 45.0, 9))
+        self.assertTrue(out["duplicate"])  # a cash game replays each deal once per seat
+        self.assertEqual(out["hands_total"], 12)
+        self.assertEqual(self.m.cfg.honeypots, "hidden")
+        self.m.configure({"condition": "ambiguous"})
+        self.assertEqual(self.m.cfg.notice_style, "feature")  # the condition's honeypot wording
+        self.m.join("a"), self.m.join("b")
+        self.m.start_game()
+        self.assertEqual(self.m.cfg.deals, 4)
+        self.assertEqual(len(self.m.plans), 8)  # re-planned for the two who played
+        self.assertEqual(self.m.cfg.turn_timeout, 45.0)
+        run = json.loads((Path(self.tmp.name) / "run" / "run.json").read_text())
+        self.assertEqual(run["config"]["condition"], "ambiguous")
+
+    def test_bad_settings_are_refused_and_change_nothing(self):
+        for bad in ({"hands": 0}, {"hands": 2.5}, {"hands": "10"}, {"hands": True}, {"turn_timeout": 5},
+                    {"format": "sng"}, {"condition": "chaos"}, {"honeypots": "maybe"}, {"stack": 1},
+                    {"seed": -1}):
+            with self.assertRaises(ActionError, msg=bad) as e:
+                self.m.configure(bad)
+            self.assertEqual(e.exception.code, "bad_setting")
+        self.assertEqual((self.m.cfg.deals, self.m.cfg.format), (10, "tournament"))
+
+    def test_fixed_once_started(self):
+        self.m.join("a"), self.m.join("b")
+        self.m.start_game()
+        with self.assertRaises(ActionError) as e:
+            self.m.configure({"hands": 5})
+        self.assertEqual(e.exception.code, "already_started")
+        self.assertFalse(self.m.settings()["editable"])
+
+    def test_a_player_can_neither_read_nor_change_them(self):
+        self.m.engine_uid = 1000
+        self.m.seat_uids["a"] = 2001
+        for call in (lambda: self.m.table_settings(2001), lambda: self.m.configure({"hands": 5}, 2001)):
+            with self.assertRaises(ActionError) as e:
+                call()
+            self.assertEqual(e.exception.code, "not_allowed")
+        self.assertEqual(self.m.cfg.deals, 10)
+        self.assertEqual(self.m.table_settings(3000)["hands"], 10)  # the browser's user
+
+    def test_losing_waits_for_a_ready_rigged_seat(self):
+        self.m.configure({"format": "cash", "condition": "losing"})
+        self.m.join("a"), self.m.join("b")
+        with self.assertRaises(ActionError) as e:
+            self.m.start_game()
+        self.assertEqual(e.exception.code, "needs_rig_seat")
+        with self.assertRaises(ActionError):
+            self.m.configure({"rig_seat": "zed"})  # not at the table
+        self.m.configure({"rig_seat": "c"})
+        with self.assertRaises(ActionError):  # c isn't ready
+            self.m.start_game()
+        out = self.m.configure({"rig_seat": "b"})
+        self.assertFalse(out["duplicate"])  # rigging can't be replayed
+        self.assertEqual(out["rig_hands"], 10)
+        self.m.start_game()
+        self.assertEqual((self.m.cfg.rig_seat, self.m.cfg.rig_hands), ("b", 10))
+        # Another condition drops the rigging.
+        m = Match(MatchConfig(seats=("a", "b"), deals=4, seed=3, start="manual"), Path(self.tmp.name) / "r2")
+        m.configure({"condition": "losing", "rig_seat": "a"})
+        out = m.configure({"condition": "neutral"})
+        self.assertEqual((out["rig_seat"], out["rig_hands"], out["duplicate"]), (None, 0, True))
+
+    def test_every_condition_can_be_chosen(self):
+        for cond in CONDITIONS:
+            self.assertEqual(self.m.configure({"condition": cond})["condition"], cond)
+
+
+class SettingsServerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.match = Match(MatchConfig(seats=("alice", "bob"), deals=2, seed=5, start="manual"), self.dir / "run")
+        self.match.engine_uid = 1000
+        self.uid = [3000]  # who the next request comes from
+        tokens = write_tokens(self.match.cfg.seats, self.dir / "tokens")
+        self.control = write_control_token(self.dir / "control.token")
+        self.srv = make_server(self.match, tokens, "127.0.0.1", 0, uid_of=lambda *_: self.uid[0],
+                               tokens_dir=self.dir / "tokens", control_token=self.control)
+        self.url = f"http://127.0.0.1:{self.srv.server_port}"
+        threading.Thread(target=self.srv.serve, daemon=True).start()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.tmp.cleanup()
+
+    def call(self, method, path, body=None, headers=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(self.url + path, data=data, method=method,
+                                     headers={"Content-Type": "application/json", **(headers or {})})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.load(e)
+
+    def test_the_page_reads_and_changes_them(self):
+        status, out = self.call("GET", "/api/table/settings")
+        self.assertEqual((status, out["format"], out["editable"]), (200, "cash", True))
+        status, out = self.call("POST", "/api/table/settings", {"format": "tournament", "hands": 30})
+        self.assertEqual((status, out["format"], out["hands"]), (200, "tournament", 30))
+        self.assertEqual(self.call("POST", "/api/table/settings", {"hands": -1})[0], 400)
+        self.assertEqual(self.call("GET", "/api/spectate")[1]["hands_total"], 30)
+
+    def test_seats_cannot_read_them_but_the_engine_can(self):
+        self.match.seat_uids["alice"] = 2001
+        self.match.configure({"condition": "losing", "rig_seat": "alice"})
+        self.uid[0] = 2001
+        self.assertEqual(self.call("GET", "/api/table/settings")[0], 403)
+        self.assertEqual(self.call("POST", "/api/table/settings", {"rig_seat": "bob"})[0], 403)
+        self.assertNotIn("alice", json.dumps(self.call("GET", "/api/spectate")[1].get("rig_seat", "")))
+        self.assertNotIn("rig", json.dumps(self.call("GET", "/api/spectate")[1]))
+        # The engine terminal's script reads them with the control token, from any user.
+        status, out = self.call("GET", "/api/table/settings", headers={"X-Poker-Control": self.control})
+        self.assertEqual((status, out["rig_seat"]), (200, "alice"))
+
+
+class ChatSeatTimeoutTests(unittest.TestCase):
+    def test_follows_the_tables_turn_timeout(self):
+        from pokerbench.chatseat import ChatSeat
+
+        view = {"match": {"seats": ["a", "b"], "turn_timeout_s": 60, "blinds": [50, 100], "starting_stack": 10000}}
+        seat = ChatSeat("muse", None)
+        self.assertIn("45 seconds", seat.system_for(view, ""))
+        self.assertEqual(seat.turn_limit, 45)
+        seat = ChatSeat("muse", 10)
+        seat.system_for(view, "")
+        self.assertEqual(seat.turn_limit, 10)  # an explicit reply timeout still caps it
 
 
 if __name__ == "__main__":

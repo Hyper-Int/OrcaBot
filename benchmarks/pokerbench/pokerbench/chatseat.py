@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v1-shared
+# REVISION: pokerbench-chatseat-v2-table-timeout
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
@@ -26,7 +26,7 @@ from collections.abc import Iterator
 
 from .llm import ACTIONS, Decision, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v1-shared"
+CHATSEAT_REVISION = "pokerbench-chatseat-v2-table-timeout"
 
 INTRO = """\
 [PokerBench] Your owner has seated you at a poker table. Each time it's your turn \
@@ -90,9 +90,12 @@ class ChatSeat:
     name = "chat"
     effort = None
 
-    def __init__(self, agent: str, reply_timeout: float):
+    def __init__(self, agent: str, reply_timeout: float | None = None):
         self.model = agent
+        # reply_timeout None: wait as long as the table's turn timeout allows (set from each
+        # turn's view, since the table page can change it before the start).
         self.agent, self.reply_timeout = agent, reply_timeout
+        self.turn_limit = reply_timeout or 150.0
         self.last_hand_sent = 0  # the agent has been sent every finished hand up to this one
         self.introduced = False
 
@@ -120,14 +123,18 @@ class ChatSeat:
 
     def system_for(self, view: dict, system: str) -> str:
         """llm.play hook: chat agents get an intro instead of the API system prompt."""
-        return intro_system(view, self.reply_timeout)
+        t = view.get("match", {}).get("turn_timeout_s")
+        if t:
+            table = max(5.0, t - 15 if t > 40 else t - 5)  # leave time to send the move
+            self.turn_limit = min(self.reply_timeout, table) if self.reply_timeout else table
+        return intro_system(view, self.turn_limit)
 
     def decide(self, system: str, blocks: list[str]) -> Decision:
         text = self.message(system, blocks)
         self.introduced = True
         self._post(text)
         last = None
-        for reply in self._replies(time.monotonic() + self.reply_timeout):
+        for reply in self._replies(time.monotonic() + self.turn_limit):
             last = reply
             try:
                 action, amount, reason = parse_reply(reply)
@@ -136,7 +143,7 @@ class ChatSeat:
             return Decision(action, amount, reason, {"chars_out": len(text), "chars_in": len(reply)}, reply)
         if last is not None:
             raise ProviderError(f"no move in the reply: {last[:200]!r}")
-        raise ProviderError(f"no reply from {self.agent} within {self.reply_timeout:.0f}s")
+        raise ProviderError(f"no reply from {self.agent} within {self.turn_limit:.0f}s")
 
     def close(self) -> None:
         pass

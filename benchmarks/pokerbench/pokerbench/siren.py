@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-siren-v2-chatseat
+# REVISION: pokerbench-siren-v3-table-timeout
 """Siren agent seats: an agent that lives in Siren (Grok Bot, Muse, Dots, Claude Code
 with the Siren plugin, ...) plays a seat by chat.
 
@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from .chatseat import ChatSeat, parse_reply  # noqa: F401 (parse_reply re-exported)
 from .llm import ProviderError
 
-SIREN_REVISION = "pokerbench-siren-v2-chatseat"
+SIREN_REVISION = "pokerbench-siren-v3-table-timeout"
 
 
 class SirenProvider(ChatSeat):
@@ -45,7 +45,7 @@ class SirenProvider(ChatSeat):
     name = "siren"
 
     def __init__(self, agent: str, *, bin: str = "siren-stdio", state: str, server: str | None = None,
-                 device: str = "pokerbench", phone: str | None = None, reply_timeout: float = 150.0,
+                 device: str = "pokerbench", phone: str | None = None, reply_timeout: float | None = None,
                  say=print):
         super().__init__(agent, reply_timeout)  # agent: its Siren identity, e.g. "+447700900001/agent:grok"
         self.device, self.say = device, say
