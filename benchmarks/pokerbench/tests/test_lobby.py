@@ -159,6 +159,123 @@ class PauseTests(unittest.TestCase):
         self.assertIn("paused", render(self.m.view(other)))
 
 
+class EndGameTests(unittest.TestCase):
+    """Ending a game early from the table page (usually after pausing it): the hand in
+    progress doesn't count, and every seat is told MATCH OVER and to stop."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.run = Path(self.tmp.name) / "run"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def started(self, **kw):
+        m = Match(MatchConfig(seats=("a", "b"), deals=4, seed=3, start="manual", **kw), self.run)
+        m.join("a"), m.join("b")
+        m.start_game()
+        return m
+
+    def play_a_hand(self, m):
+        n = m.hand.number
+        while m.hand is not None and m.hand.number == n:
+            m.act(m.hand.actor, "fold")
+
+    def test_ending_a_paused_game_mid_hand(self):
+        from pokerbench.cli import STOP_LINE, render
+
+        m = self.started()
+        self.play_a_hand(m)
+        stacks_before = dict(m.stacks)
+        m.act(m.hand.actor, "call")  # hand 2 is under way
+        m.pause()
+        out = m.end_game()
+        self.assertEqual((out["hands_played"], out["abandoned_hand"]), (1, 2))
+        self.assertEqual((m.status, m.finish_reason, m.paused), ("finished", "ended", False))
+        self.assertEqual(m.stacks, stacks_before)
+        final = json.loads((self.run / "results.json").read_text())
+        self.assertEqual((final["finish_reason"], final["hands_played"], final["abandoned_hand"]), ("ended", 1, 2))
+        events = [json.loads(l)["type"] for l in (self.run / "events.jsonl").read_text().splitlines()]
+        self.assertLess(events.index("hand_abandoned"), events.index("ended"))
+        text = render(m.view("a"))
+        self.assertIn("MATCH OVER", text)
+        self.assertIn("ended early from the table page", text)
+        self.assertIn("Hand 2 was in progress", text)
+        self.assertIn(STOP_LINE, text)
+        self.assertEqual(m.spectate()["hands_played"], 1)
+
+    def test_a_waiting_seat_wakes_up_to_match_over(self):
+        m = self.started()
+        actor = m.hand.actor
+        other = "b" if actor == "a" else "a"
+        got = {}
+        t = threading.Thread(target=lambda: got.setdefault("view", m.wait(other, 30)))
+        t.start()
+        m.pause()
+        m.end_game()
+        t.join(5)
+        self.assertEqual(got["view"]["match"]["status"], "finished")
+        self.assertIn(other, m.final_seen)
+
+    def test_a_late_move_is_told_to_stop_and_counts_as_told(self):
+        m = self.started()
+        actor = m.hand.actor
+        m.end_game()  # without pausing first: allowed too
+        with self.assertRaises(ActionError) as e:
+            m.act(actor, "call")
+        self.assertIn("Stop playing", e.exception.message)
+        self.assertIn(actor, m.final_seen)
+
+    def test_a_tournament_ended_early_has_a_leader_not_a_winner(self):
+        from pokerbench.cli import render
+        from pokerbench.report import build
+
+        m = self.started(format="tournament", level_hands=2, duplicate=False)
+        self.play_a_hand(m)
+        m.end_game()
+        self.assertIn("Leader:", render(m.view("a")))
+        build(self.run)
+        report = (self.run / "report.md").read_text()
+        self.assertIn("Leader (match stopped early)", report)
+        self.assertIn("ended early from the table page", report)
+
+    def test_only_a_running_game_and_not_by_a_player(self):
+        m = Match(MatchConfig(seats=("a", "b"), deals=2, seed=3, start="manual"), self.run)
+        with self.assertRaises(ActionError) as e:
+            m.end_game()
+        self.assertEqual(e.exception.code, "not_running")
+        m.join("a"), m.join("b")
+        m.start_game()
+        m.engine_uid = 1000
+        m.seat_uids["a"] = 2001
+        with self.assertRaises(ActionError) as e:
+            m.end_game(uid=2001)
+        self.assertEqual(e.exception.code, "not_allowed")
+        self.assertEqual(m.status, "running")
+        m.end_game()
+        with self.assertRaises(ActionError):
+            m.end_game()  # already over
+
+    def test_an_agent_block_is_told_the_game_is_over(self):
+        from pokerbench.chatseat import ChatSeat
+
+        posted = []
+
+        class Seat(ChatSeat):
+            def _post(self, text):
+                posted.append(text)
+
+        m = self.started()
+        m.end_game()
+        seat = Seat("agent:muse")
+        seat.game_over(m.view("a"))
+        self.assertEqual(posted, [])  # never played: nothing to tell
+        seat.introduced = True
+        seat.game_over(m.view("a"))
+        self.assertIn("MATCH OVER", posted[0])
+        self.assertIn("no more turns", posted[0])
+
+
 class LobbyServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -212,6 +329,16 @@ class LobbyServerTests(unittest.TestCase):
         self.assertEqual(r.status, 200)
         self.assertEqual(json.loads(r.read())["status"], "waiting_for_players")
         conn.close()
+
+    def test_end_over_http(self):
+        Client(url=self.url, token=self.tokens["alice"]).state()
+        Client(url=self.url, token=self.tokens["bob"]).state()
+        self.assertEqual(self.post("/api/table/end")[0], 409)  # not started
+        self.assertEqual(self.post("/api/table/start")[0], 200)
+        self.assertEqual(self.post("/api/table/pause")[0], 200)
+        status, out = self.post("/api/table/end")
+        self.assertEqual((status, out["status"]), (200, "finished"), out)
+        self.assertEqual(self.match.finish_reason, "ended")
 
     def test_start_over_http_then_play_to_the_end(self):
         self.assertEqual(self.post("/api/table/start")[0], 409)  # nobody yet
