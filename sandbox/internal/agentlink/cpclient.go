@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: agent-link-v1-device-client
+// REVISION: agent-link-v2-status-detail
 
 package agentlink
 
@@ -57,7 +57,8 @@ func (c *CPClient) do(ctx context.Context, dashboardID, method, path string, bod
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("control plane %s %s: %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+		// The full URL: which control plane answered is often the problem.
+		return fmt.Errorf("%s %s%s: %d %s", method, c.BaseURL, path, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)

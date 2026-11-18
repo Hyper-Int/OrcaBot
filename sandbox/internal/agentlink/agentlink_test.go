@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -59,14 +60,18 @@ func fakeClient() {
 }
 
 type fakeCP struct {
-	mu       sync.Mutex
-	enabled  bool
-	approved []string
-	agents   []Agent
-	asked    int
+	mu        sync.Mutex
+	enabled   bool
+	configErr error
+	approved  []string
+	agents    []Agent
+	asked     int
 }
 
 func (f *fakeCP) Config(context.Context, string) (Config, error) {
+	if f.configErr != nil {
+		return Config{}, f.configErr
+	}
 	return Config{Enabled: f.enabled, HubURL: "http://hub.test", Device: "dash-1"}, nil
 }
 
@@ -174,6 +179,35 @@ func TestDisabledWithoutAHub(t *testing.T) {
 	}
 	if _, err := link.Send(ctx, grok, "hi"); err == nil {
 		t.Fatal("sending without a hub should fail")
+	}
+}
+
+// A VM pointed at the wrong control plane (or one that refuses it) says why, in the
+// status the Agent block shows, instead of a bare error.
+func TestControlPlaneFailureIsExplained(t *testing.T) {
+	why := "GET https://api.orcabot.com/internal/dashboards/dash-1/agent-link/config: 404 not found"
+	m, _ := newTestManager(t, &fakeCP{configErr: errors.New(why)})
+	link := m.Link("dash-1")
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if status, detail := link.Status(); status == "error" {
+			if !strings.Contains(detail, "control plane") || !strings.Contains(detail, "api.orcabot.com") || !strings.Contains(detail, "404") {
+				t.Fatalf("detail doesn't say what failed: %q", detail)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	status, detail := link.Status()
+	t.Fatalf("expected error status, got %q %q", status, detail)
+}
+
+func TestBriefKeepsDetailsShort(t *testing.T) {
+	if got := brief(strings.Repeat("x", 1000)); len(got) > 250 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("not shortened: %d chars", len(got))
+	}
+	if got := brief("  short  "); got != "short" {
+		t.Fatalf("got %q", got)
 	}
 }
 
