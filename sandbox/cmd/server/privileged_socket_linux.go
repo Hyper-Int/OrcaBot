@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v14-terminal-links
+// REVISION: privileged-socket-v15-self-input
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v14-terminal-links"
+const privilegedSocketRevision = "privileged-socket-v15-self-input"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -247,6 +247,12 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	// REVISION: privileged-socket-v14-terminal-links
 	mux.HandleFunc("/links", func(w http.ResponseWriter, r *http.Request) {
 		ps.server.handleLinksForPTY(w, r, session, entry.PTYID)
+	})
+
+	// /input → type into this PTY's own terminal (a coordinator handing a prompt to the
+	// agent the user started there). Only ever the caller's own PTY. REVISION: self-input-v1
+	mux.HandleFunc("/input", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleSelfInputForPTY(w, r, session, entry.PTYID)
 	})
 
 	// /tools-changed → broadcast tools_changed event.

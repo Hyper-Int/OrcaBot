@@ -492,6 +492,8 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// Terminals linked to this terminal by edges (pool mode: the Unix socket's /links).
 	// REVISION: terminal-links-v1
 	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/links", s.poolModeGuard(s.requireLocalPTYAuth(s.handleLinksLocal)))
+	// Type into this PTY's own terminal (pool mode: the Unix socket's /input). REVISION: self-input-v1
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/input", s.poolModeGuard(s.requireLocalPTYAuth(s.handleSelfInputLocal)))
 
 	// Anthropic key — pool-guarded: in pool mode, hooks.go writes the Unix socket URL
 	// (/anthropic-key on /run/orcabot/privileged.sock) into settings.local.json, so no
