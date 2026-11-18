@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v32-warm-pool-owner
-const sessionsRevision = "sessions-v32-warm-pool-owner";
+// REVISION: sessions-v33-machine-controlplane-url
+const sessionsRevision = "sessions-v33-machine-controlplane-url";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -22,7 +22,7 @@ import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
 import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
-import { pickOwnWarmMachine, sandboxControlplaneUrl } from '../sandbox/warm-pool';
+import { machineControlplaneEnv, pickOwnWarmMachine, sandboxControlplaneUrl } from '../sandbox/warm-pool';
 import { detectAgentType, logServerEvent } from '../analytics/handler';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
@@ -898,7 +898,7 @@ async function coldProvisionMachine(
       autostop: 'suspend',
       env: {
         ...(await sandboxAuthEnv(env)),
-        CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
+        ...machineControlplaneEnv(env),
         ...sandboxInternalTokenEnv(env),
         DASHBOARD_ID: dashboardId,
         ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',

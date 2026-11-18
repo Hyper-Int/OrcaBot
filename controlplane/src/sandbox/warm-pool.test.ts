@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DEFAULT_CONTROLPLANE_URL,
+  machineControlplaneEnv,
   countOwnWarmMachines,
   migrateWarmMachinesOwner,
   pickOwnWarmMachine,
@@ -97,5 +98,11 @@ describe('warm pool per control plane', () => {
   it('the owner is the URL the VM is given', () => {
     expect(sandboxControlplaneUrl({ FLY_SANDBOX_CONTROLPLANE_URL: DEV })).toBe(DEV);
     expect(sandboxControlplaneUrl({})).toBe(DEFAULT_CONTROLPLANE_URL);
+  });
+
+  it('VMs get the URL under a name no Fly app secret shadows', () => {
+    expect(machineControlplaneEnv({ FLY_SANDBOX_CONTROLPLANE_URL: DEV }))
+      .toEqual({ CONTROLPLANE_URL: DEV, ORCABOT_CONTROLPLANE_URL: DEV });
+    expect(machineControlplaneEnv({}).ORCABOT_CONTROLPLANE_URL).toBe(DEFAULT_CONTROLPLANE_URL);
   });
 });

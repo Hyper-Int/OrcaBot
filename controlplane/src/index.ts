@@ -58,7 +58,7 @@ import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 import { sandboxAuthEnv } from './sandbox/request-signing';
-import { countOwnWarmMachines, recordWarmMachine, sandboxControlplaneUrl } from './sandbox/warm-pool';
+import { countOwnWarmMachines, machineControlplaneEnv, recordWarmMachine, sandboxControlplaneUrl } from './sandbox/warm-pool';
 
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
@@ -779,7 +779,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         autostop: 'off',
         env: {
           ...(await sandboxAuthEnv(env)),
-          CONTROLPLANE_URL: owner,
+          ...machineControlplaneEnv(env),
           ...sandboxInternalTokenEnv(env),
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
           ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),
