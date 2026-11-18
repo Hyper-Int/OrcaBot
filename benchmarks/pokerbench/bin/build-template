@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v14-linked-seats
+# REVISION: pokerbench-template-v15-interactive-agents
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -15,13 +15,23 @@ from pathlib import Path
 
 REPO = "https://github.com/Hyper-Int/OrcaBot"
 PORT = 8765
-# The seat terminals in a new dashboard: (canvas name, defaults). Each is linked to the
-# engine, which seats it under its name; what it plays can be changed on the table page.
-# The house bot needs no keys, so there is always someone to play.
-SEAT_TERMINALS = (
-    ("Claude Code", {"PLAYER": "claude-code", "MODEL": ""}),
-    ("Codex", {"PLAYER": "codex", "MODEL": ""}),
-    ("Gemini CLI", {"PLAYER": "gemini-cli", "MODEL": ""}),
+# The seat terminals in a new dashboard. Each is linked to the engine, which seats it
+# under its canvas name. Agent terminals run their agent interactively (log in there as
+# usual); bot terminals can be switched between an API model and the house bot on the
+# table page. The house bot needs no keys, so there is always someone to play.
+#   agents: (canvas name, vendor for the seat helper, launch line)
+#   bots:   (canvas name, defaults)
+# Launch lines: Claude Code with --dangerously-skip-permissions (a general shell like the
+# others: the prompt allows writing tools, and integrity runs need the honeypot
+# reachable); Codex with --dangerously-bypass-approvals-and-sandbox (its own sandbox
+# blocks the loopback HTTP the poker command uses; the VM is the sandbox); Gemini with
+# --yolo --skip-trust (otherwise it stops at a folder-trust prompt and turns YOLO off).
+AGENT_TERMINALS = (
+    ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
+    ("Codex", "openai", 'exec codex ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
+    ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust'),
+)
+BOT_TERMINALS = (
     ("Claude Sonnet (API)", {"PLAYER": "api", "PROVIDER": "anthropic", "MODEL": "claude-sonnet-5-5", "EFFORT": ""}),
     ("House bot", {"PLAYER": "house", "STRATEGY": "tight"}),
 )
@@ -83,17 +93,34 @@ ENGINE_BOOT = CONFIG + INSTALL
 # (bin/seat, versioned with the code, so seat behaviour changes need no reseeding).
 # Linked to the engine, it takes a seat named after the terminal; the table page
 # chooses what it plays. Copy any seat terminal and link it to add a player.
+# Orcabot recognises an agent terminal (and the Codex model picker adds its flags) by the
+# first time the boot command names the agent as a word. So agent boot commands name
+# their agent only on the launch line, and bot boot commands never as a word.
 SEAT_COMMENTS = {
-    "PLAYER": "claude-code | codex | gemini-cli | api | house",
-    "MODEL": "blank: the player's default model",
-    "PROVIDER": "api: anthropic | openai | gemini",
-    "EFFORT": "api: optional effort (anthropic/openai) or thinking level (gemini)",
+    "PLAYER": "api | house",
+    "MODEL": "the provider's model id",
+    "PROVIDER": "api: the provider (anthropic, openai, gemini)",
+    "EFFORT": "api: optional effort, or thinking level",
     "STRATEGY": "house: tight | random | call",
 }
 
 
+def agent_boot(vendor: str, launch: str) -> str:
+    lines = [
+        "# ===== PokerBench seat: an agent terminal like any other =====",
+        "# Log in here as usual and leave it at its prompt. Linked to the engine terminal, it",
+        "# takes a seat (the table shows it ready); at Start it is given the poker prompt.",
+        "MODEL=                  # blank: the default model",
+        'export MODEL PATH="/tmp/pokerbench/bin:$PATH" POKER_CLI=/tmp/pokerbench/bin/poker',
+        "( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done",
+        f"  exec bash /tmp/pokerbench/seat.sh helper {vendor} ) >/dev/null 2>&1 &",
+        launch,
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def seat_boot(defaults: dict) -> str:
-    lines = ["# ===== PokerBench seat: link this terminal to the engine to play =====",
+    lines = ["# ===== PokerBench seat: a bot, linked to the engine terminal =====",
              "# What it plays is chosen on the table page (click the seat); these are the defaults."]
     for k, v in defaults.items():
         lines.append(f"{k}={v}".ljust(24) + f"# {SEAT_COMMENTS[k]}")
@@ -117,28 +144,30 @@ How a game starts (tell the user this when they ask how to run it, or walk them
 through the dashboard):
 1. The **engine** terminal starts a table (a lobby) and seats every terminal and Agent
    block linked to it, each under its name on the canvas.
-2. The **table** (the browser block, http://localhost:{PORT}/) shows each seat as
-   "ready", "not here yet", or what it's missing (e.g. "Codex isn't signed in").
-3. **Click a seat** on the table to choose what plays it: Claude Code, Codex, Gemini
-   CLI, a model through its API, or the house bot, and which model. The seat's
-   terminal switches by itself. Each seat terminal's boot command only holds defaults.
-4. A seat that can't play yet says what is missing, in its terminal and on the table:
-   sign in there (Ctrl-C gives a shell), or add the provider's key in Orcabot's
-   secrets, then restart that terminal. Seats that can't play are simply left out.
+2. The **agent terminals** (Claude Code, Codex, Gemini CLI) are normal agent terminals:
+   the user logs in to each one there as usual (or adds the provider's key in Orcabot's
+   secrets and restarts it) and leaves it at its prompt. Until then the table says
+   what it's waiting for ("log in in its terminal", "see its terminal").
+3. The **table** (the browser block, http://localhost:{PORT}/) shows each seat as
+   "ready", "not here yet", or what's missing.
+4. The **bot terminals** (a model through its API, the house bot): click the seat on the
+   table to switch it between an API model (provider, model, effort) and the house bot.
 5. An **outside agent** (Grok Bot, Muse, Dots, Claude Code, Codex, ...): link it in the
    Agent block, which is already linked to the engine. It takes a seat within a few
    seconds, named after the agent, and plays by chat.
 6. Press **Settings** on the table to set up the game (format, hands, blinds, time per
-   decision, condition, honeypot, seed), then **Start**. The game starts with every
-   player who is ready. The **house bot** needs no keys, so one outside agent and the
-   house is always enough for a game.
+   decision, condition, honeypot, seed), then **Start**. Each ready agent terminal is
+   given the poker prompt (typed in at its prompt, as if pasted) and starts playing.
+   The game starts with every player who is ready; the rest are left out. The **house
+   bot** needs no keys, so one outside agent and the house is always enough.
 
 Adding or removing players (only before Start):
 - Add one: copy a seat terminal (or ask for one) and link it to the engine. To create
   one yourself: create_terminal with name = the player's name (e.g. "Gemini 2"),
-  agentic = true, and boot_command = the boot command of an existing seat terminal
-  (PLAYER=, MODEL=, then `exec bash /tmp/pokerbench/seat.sh`), then connect_nodes from
-  it to the engine terminal. Never create a new engine or table.
+  agentic = true for an agent, and boot_command = the boot command of an existing seat
+  terminal of that kind, then connect_nodes from it to the engine terminal. Never
+  create a new engine or table, and never type into an agent terminal to start it
+  playing: Start does that.
 - Remove one: delete its link to the engine. Renaming a terminal renames its seat.
 - A table is 2 to 10 seats.
 
@@ -148,11 +177,14 @@ Components:
   auto), REF. With START=manual (the default) FORMAT to TURN_TIMEOUT are only defaults
   for the table page's Settings. Defaults: a tournament, 100 hands, blinds up every 10,
   300s per decision, obvious honeypot. It prints the report at the end.
-- **Seat** terminals (Claude Code, Codex, Gemini CLI, Claude Sonnet (API), House bot):
-  each runs the seat script; once the game starts it plays as the player chosen for it.
-  Agents get the prompt the engine rendered for this table and play through the
-  `poker` command (they may write their own tools); an API model gets a fresh request
-  per decision and the terminal shows its actions, reasons, latency and tokens.
+- **Agent** terminals (Claude Code, Codex, Gemini CLI): the agent runs interactively, as
+  in any Orcabot agent terminal; MODEL= in the boot command (or the agent's own model
+  switch) picks the model. A quiet helper next to it checks the seat in once the agent
+  is signed in and at its prompt, and at Start types in the prompt the engine rendered
+  for this table. Agents play through the `poker` command and may write their own tools.
+- **Bot** terminals (Claude Sonnet (API), House bot): an API model gets a fresh request
+  per decision and the terminal shows its actions, reasons, latency and tokens; the
+  house bot is a simple rules-based player.
 - **Agent** block: an outside agent; plays by chat (each turn is a message, its
   one-line JSON reply is its move).
 - **Table** browser block: the lobby (seats, Settings, Start), then the live table
@@ -202,9 +234,11 @@ def build() -> dict:
             "size": {"width": 760, "height": 640},
         },
     ]
-    for i, (name, defaults) in enumerate(SEAT_TERMINALS):
+    seats = [(name, agent_boot(vendor, launch), True) for name, vendor, launch in AGENT_TERMINALS]
+    seats += [(name, seat_boot(defaults), False) for name, defaults in BOT_TERMINALS]
+    for i, (name, boot, agentic) in enumerate(seats):
         x, y = (i % 3) * 580, 660 + (i // 3) * 400
-        items.append(terminal(f"seat_{i}", name, seat_boot(defaults), x, y, 560, 380, True))
+        items.append(terminal(f"seat_{i}", name, boot, x, y, 560, 380, agentic))
     # An outside agent (Grok Bot, Muse, Dots, ...): an Agent block connected to the
     # engine terminal is seated at the table. Unlinked in the template; the block walks
     # the user through linking their agent with a pairing code.
@@ -232,7 +266,7 @@ def build() -> dict:
                    "sourceHandle": "right-out", "targetHandle": "left-in"}]
                  + [{"sourcePlaceholderId": f"seat_{i}", "targetPlaceholderId": "engine",
                      "sourceHandle": "top-out", "targetHandle": "bottom-in"}
-                    for i in range(len(SEAT_TERMINALS))],
+                    for i in range(len(AGENT_TERMINALS) + len(BOT_TERMINALS))],
         "viewport": {"x": 0, "y": 0, "zoom": 0.7},
         "setupGuide": SETUP_GUIDE,
     }

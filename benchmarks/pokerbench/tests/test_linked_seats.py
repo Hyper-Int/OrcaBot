@@ -79,18 +79,32 @@ class EngineSeatTests(unittest.TestCase):
         with self.assertRaises(ActionError):
             self.m.remove_seat("a")  # but nobody leaves a running game
 
-    def test_the_table_page_chooses_the_player_and_the_seat_checks_in_again(self):
+    def test_the_table_page_switches_a_bot_seat_and_it_checks_in_again(self):
         self.m.add_seat("seat1", uid=2001)
-        setup = self.m.seat_setup("seat1", {"kind": "claude-code"})  # the terminal's own default
-        self.assertEqual(setup["player"], {"kind": "claude-code"})
+        setup = self.m.seat_setup("seat1", {"kind": "house"})  # the terminal's own default
+        self.assertEqual(setup["player"], {"kind": "house", "strategy": "tight"})
         self.m.join("seat1")
-        out = self.m.set_player("seat1", {"kind": "gemini-cli", "model": "flash"}, uid=3000)
-        self.assertEqual(out["player"], {"kind": "gemini-cli", "model": "flash"})
+        out = self.m.set_player("seat1", {"kind": "api", "provider": "openai", "model": "gpt-5.5"}, uid=3000)
+        self.assertEqual(out["player"]["kind"], "api")
         self.assertNotIn("seat1", self.m.joined)  # it has to check in as the new player
         self.assertEqual(self.m.spectate()["seat_status"]["seat1"]["state"], "switching")
-        self.assertEqual(self.m.seat_setup("seat1", {"kind": "claude-code"})["player"]["kind"], "gemini-cli")
+        self.assertEqual(self.m.seat_setup("seat1", {"kind": "house"})["player"]["kind"], "api")
         self.assertEqual(self.m.seat_setup("seat1")["rev"], 1)
-        self.assertEqual(self.m.spectate()["players"]["seat1"]["label"], "Gemini CLI (flash)")
+        self.assertEqual(self.m.spectate()["players"]["seat1"]["label"], "openai/gpt-5.5 (API)")
+
+    def test_an_agent_terminal_is_its_agent(self):
+        # Claude Code runs interactively in its terminal: the table page can't swap it.
+        self.m.add_seat("claude", uid=2001)
+        self.m.seat_setup("claude", {"kind": "claude-code"})
+        with self.assertRaises(ActionError) as e:
+            self.m.set_player("claude", {"kind": "house"})
+        self.assertIn("running in its terminal", e.exception.message)
+        # ...and a bot terminal can't become one.
+        self.m.add_seat("bot", uid=2002)
+        self.m.seat_setup("bot", {"kind": "house"})
+        with self.assertRaises(ActionError) as e:
+            self.m.set_player("bot", {"kind": "codex"})
+        self.assertIn("own terminal", e.exception.message)
 
     def test_players_cannot_choose_and_agent_blocks_are_fixed(self):
         self.m.add_seat("seat1", uid=2001)
@@ -230,8 +244,8 @@ class HostTests(unittest.TestCase):
         self.match.add_seat("codex")
         hdr = {"X-Poker-Seat": "codex"}
         self.uid[0] = 2003  # the seat's terminal
-        status, out = self.post("/api/seat/setup", {"default": {"kind": "codex"}}, hdr)
-        self.assertEqual((status, out["player"]["kind"]), (200, "codex"))
+        status, out = self.post("/api/seat/setup", {"default": {"kind": "api"}}, hdr)
+        self.assertEqual((status, out["player"]["kind"]), (200, "api"))
         self.assertEqual(self.post("/api/seat/status", {"state": "needs", "message": "not signed in"}, hdr)[0], 200)
         self.assertNotIn("codex", self.match.joined)  # asking isn't checking in
         self.assertEqual(self.post("/api/table/players", {"seat": "codex", "player": {"kind": "house"}})[0], 403)
@@ -241,6 +255,34 @@ class HostTests(unittest.TestCase):
         # Seating is the engine's job: refused without its control token.
         self.assertEqual(self.post("/api/table/seats", {"seat": "x"})[0], 403)
         self.assertEqual(self.post("/api/table/seats/remove", {"seat": "codex"})[0], 403)
+
+
+class CliFindsItsSeatTests(unittest.TestCase):
+    """An agent started in its own terminal before the game has no POKER_SEAT: the poker
+    command finds the engine and its seat from what the engine publishes."""
+
+    def test_from_engine_env_and_seats_json(self):
+        import os
+        from unittest import mock
+
+        from pokerbench.cli import Client
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pub, tokens = Path(tmp) / "pub", Path(tmp) / "tokens"
+            pub.mkdir(), tokens.mkdir()
+            (pub / "engine.env").write_text(f'POKER_URL=http://127.0.0.1:9999\nPOKER_TOKENS_DIR={tokens}\n'
+                                            'POKER_SEATS="claude-code"\nPOKER_STARTED=1\n')
+            (pub / "seats.json").write_text(json.dumps({"by_pty": {"pty-7": "claude-code"}}))
+            (tokens / "claude-code.token").write_text("tok\n")
+            env = {"POKER_PUB": str(pub), "ORCABOT_PTY_ID": "pty-7"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                c = Client()
+            self.assertEqual((c.url, c.seat, c.token), ("http://127.0.0.1:9999", "claude-code", "tok"))
+            with mock.patch.dict(os.environ, {**env, "ORCABOT_PTY_ID": "pty-other"}, clear=True):
+                self.assertIsNone(Client().seat)  # a terminal that isn't linked has no seat
+            with mock.patch.dict(os.environ, {**env, "POKER_URL": "http://x", "POKER_SEAT": "a"}, clear=True):
+                c = Client()
+            self.assertEqual((c.url, c.seat), ("http://x", "a"))  # what it was told wins
 
 
 if __name__ == "__main__":

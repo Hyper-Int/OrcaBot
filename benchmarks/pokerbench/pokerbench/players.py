@@ -1,13 +1,14 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-players-v1-linked-seats
+# REVISION: pokerbench-players-v2-interactive-agents
 """What plays in a seat.
 
-In Orcabot every player is a component linked to the engine terminal: a seat terminal
-(any terminal running the seat script, bin/seat) or an Agent block. A seat terminal can
-play any of the kinds below; which one is chosen on the table page before the start
-(the terminal's PLAYER= is only its default). An Agent block is always "agent".
+In Orcabot every player is a component linked to the engine terminal: an agent terminal
+(Claude Code, Codex or Gemini CLI, run interactively; the seat script's helper hands it
+the prompt at Start), a bot terminal (a model through its API, or the house bot: which
+one, and its settings, can be chosen on the table page before the start), or an Agent
+block (always "agent").
 
 A player is a small dict: {"kind": ..., plus "model" (agents and API models),
 "provider" and "effort" (API models), "strategy" (the house bot)}.
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-PLAYERS_REVISION = "pokerbench-players-v1-linked-seats"
+PLAYERS_REVISION = "pokerbench-players-v2-interactive-agents"
 
 KINDS = {
     "claude-code": "Claude Code",
@@ -27,8 +28,12 @@ KINDS = {
     "house": "House bot",
     "agent": "Agent block",
 }
-# What the table page can choose for a seat terminal. "agent" is an Agent block's only kind.
+# What a seat terminal can play. "agent" is an Agent block's only kind.
 TERMINAL_KINDS = ("claude-code", "codex", "gemini-cli", "api", "house")
+# An agent runs interactively in its own terminal (you log in there as usual), so a seat
+# is that agent for good; the table page can switch a bot seat between these.
+HARNESS_KINDS = ("claude-code", "codex", "gemini-cli")
+BOT_KINDS = ("api", "house")
 PROVIDERS = ("anthropic", "openai", "gemini")
 STRATEGIES = ("tight", "random", "call")
 DEFAULT_API_MODEL = {"anthropic": "claude-opus-5-5"}  # the others need a model named

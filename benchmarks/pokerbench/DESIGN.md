@@ -268,9 +268,13 @@ no link; names and PTY ids only, never boot commands), and the sandbox serves it
 the terminal itself (`/links` on the privileged socket in pool mode, MCPLocal
 otherwise), adding each linked terminal's pool UID. The engine binds each seat to that
 UID before the seat says anything, so no other terminal can claim it, and rebinds a
-restarted terminal's new PTY user, mid-game too. Every seat terminal runs the same
-seat script; what plays it (Claude Code, Codex, Gemini CLI, an API model, the house
-bot, and the model) is chosen on the table page until Start, and the terminal follows.
+restarted terminal's new PTY user, mid-game too. An agent terminal (Claude Code,
+Codex, Gemini CLI) runs its agent interactively, as any Orcabot agent terminal does, so
+the user logs in there as usual; the seat script's helper, in the background, checks
+the seat in once the agent is signed in and at its prompt, and at Start types the
+rendered prompt into that terminal (the sandbox's self-input route: a process may type
+into its own terminal, never another). A bot terminal (an API model or the house bot)
+can be switched between the two on the table page until Start.
 Seats introduce themselves when they join (`X-Poker-Seat-Info`), so the table and
 report know who is in each seat. Outside the PTY pool every terminal is root, the
 engine's own user: seats then go by name, and the run is reported as not isolated.
