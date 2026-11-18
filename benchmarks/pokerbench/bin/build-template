@@ -140,6 +140,15 @@ own component on the canvas, **linked to the engine terminal**: a link to the en
 is what makes a component a player. Help the user set up a game, start it, watch it
 and read the results.
 
+**Everything is already on the canvas** from the moment the dashboard opens: the
+engine terminal, the table (browser), three agent terminals (Claude Code, Codex, Gemini
+CLI), two bot terminals (Claude Sonnet (API), House bot) and an Agent block, all linked.
+Never create, start, type into or delete components to set it up or start a game: the
+engine and the seats start by themselves, and Start on the table starts the agents. If
+list_items looks empty or incomplete, the dashboard is still loading: wait and look
+again, never rebuild it. Create a component only when the user explicitly asks to add
+a player (below).
+
 How a game starts (tell the user this when they ask how to run it, or walk them
 through the dashboard):
 1. The **engine** terminal starts a table (a lobby) and seats every terminal and Agent
@@ -162,12 +171,12 @@ through the dashboard):
    bot** needs no keys, so one outside agent and the house is always enough.
 
 Adding or removing players (only before Start):
-- Add one: copy a seat terminal (or ask for one) and link it to the engine. To create
-  one yourself: create_terminal with name = the player's name (e.g. "Gemini 2"),
-  agentic = true for an agent, and boot_command = the boot command of an existing seat
-  terminal of that kind, then connect_nodes from it to the engine terminal. Never
-  create a new engine or table, and never type into an agent terminal to start it
-  playing: Start does that.
+- Add one: copy a seat terminal and link it to the engine. Only if the user asks you to
+  add one: create_terminal with name = the player's name (e.g. "Gemini 2"), agentic =
+  true for an agent, and boot_command = the boot command of an existing seat terminal
+  of that kind (read it with list_items), then connect_nodes from it to the engine
+  terminal. Never create a new engine or table, and never type into an agent terminal
+  to start it playing: Start does that.
 - Remove one: delete its link to the engine. Renaming a terminal renames its seat.
 - A table is 2 to 10 seats.
 
