@@ -40,7 +40,7 @@ clean:
 
 # Agent blocks: the client each dashboard VM runs to reach outside agents
 # (siren-stdio, from the agent hub's downloads). Bump both together on a new release.
-AGENT_LINK_URL ?= https://siren-signal.robbomacrae.workers.dev/download/siren-stdio-linux-x86_64
+AGENT_LINK_URL ?= https://agents.orcabot.com/download/siren-stdio-linux-x86_64
 AGENT_LINK_SHA256 ?= cad65b5c006c3b3684f6390a5c564a05c3e2838c19e9e580b1a9ec4f12b4567d
 AGENT_LINK_ARGS = --build-arg AGENT_LINK_URL=$(AGENT_LINK_URL) --build-arg AGENT_LINK_SHA256=$(AGENT_LINK_SHA256)
 
