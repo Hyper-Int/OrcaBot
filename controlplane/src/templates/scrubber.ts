@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: template-scrubber-v2-preserve-notes
+// REVISION: template-scrubber-v3-agent-block
 
 /**
  * Scrubs sensitive data from dashboard items before template export.
@@ -28,7 +28,8 @@ export type DashboardItemType =
   | 'recipe'
   | 'prompt'
   | 'schedule'
-  | 'benchmark';
+  | 'benchmark'
+  | 'agent';
 
 /**
  * Safely parse JSON, returning null on failure
@@ -188,6 +189,14 @@ export function scrubItemContent(
           evaluate: parsed.evaluate ?? false,
           codexAuth: parsed.codexAuth ?? 'broker',
         });
+      }
+
+      case 'agent': {
+        // Keep which kind of agent the block is for (its setup instructions); drop the
+        // linked agent, which belongs to the exporting user's account.
+        const parsed = safeParseJson(content) as Record<string, unknown> | null;
+        const kind = parsed && typeof parsed.kind === 'string' ? parsed.kind : 'grok';
+        return JSON.stringify({ kind });
       }
 
       default:

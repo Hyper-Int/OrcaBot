@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: ui-commands-v2-agent-block-size
 
 /**
  * Hook for executing UI commands from agents
@@ -49,6 +50,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
   benchmark: { width: 340, height: 470 },
+  agent: { width: 360, height: 480 },
   integration: { width: 320, height: 400 },
 };
 

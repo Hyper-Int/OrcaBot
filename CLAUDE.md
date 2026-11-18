@@ -130,6 +130,14 @@ Key files:
 - `frontend/src/components/EgressApprovalDialog.tsx` — Approval dialog UI
 - `frontend/src/components/EgressAllowlistPanel.tsx` — Allowlist management UI
 
+### Agent Blocks (outside AI agents)
+An `agent` canvas block is an AI agent that runs on its own computer (Grok Bot, Muse, Dots, Claude Code, Codex, ...), linked to the user with a pairing code. Messages are end-to-end encrypted (MLS) through an agent hub (`AGENT_HUB_URL`); the hub is never named in the UI.
+- Each Orcabot user has a hub **owner** identity, issued server to server (`AGENT_HUB_PARTNER_SECRET`). Its token lives only in `agent_hub_owners` (encrypted) — **never in `user_secrets`**, which are pushed into the VM env — and only approves codes / lists / removes agents.
+- Each dashboard VM is a **linked device of the dashboard owner** (as with secrets: one VM, the owner's credentials). The VM's client (`sandbox/internal/agentlink`, running `orcabot-agent-link` as its own user, state outside `/workspace`) makes its own keys; the control plane approves its code only after checking it is a *device* code with *this dashboard's* device name (`/internal/dashboards/:id/agent-link/approve-device`).
+- **No agent without edge**: a terminal reaches only Agent blocks its canvas item has an edge to, decided by the control plane from D1 edges (`/internal/dashboards/:id/terminals/:ptyId/agents`), served to the terminal over the privileged socket (`/agents`, SO_PEERCRED) or MCPLocal (per-PTY secret, pool-guarded).
+- The block's chat view is **owner-only** (`/dashboards/:id/agents/chat`): chatting from the VM is chatting as the owner.
+- Key files: `controlplane/src/agents/handler.ts`, `sandbox/internal/agentlink/`, `sandbox/cmd/server/agentlink.go`, `frontend/src/components/blocks/AgentBlock.tsx`, `frontend/src/data/agent-kinds.ts`
+
 ### Network Egress Proxy Feature Flag
 The egress proxy is gated behind a single env var:
 - **Global**: Set `EGRESS_PROXY_ENABLED=true` on the Fly machine to enable for all sessions

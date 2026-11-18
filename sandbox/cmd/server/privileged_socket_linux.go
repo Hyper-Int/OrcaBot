@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v12-error-codes
+// REVISION: privileged-socket-v13-agent-link
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v12-error-codes"
+const privilegedSocketRevision = "privileged-socket-v13-agent-link"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -230,6 +230,16 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	// /scrollback → return PTY scrollback ring buffer.
 	mux.HandleFunc("/scrollback", func(w http.ResponseWriter, r *http.Request) {
 		ps.server.handleScrollbackForPTY(w, session, entry.PTYID)
+	})
+
+	// /agents, /agents/send, /agents/messages → the outside agents this PTY's terminal is
+	// connected to by edges (Agent blocks). PTY identity from SO_PEERCRED only.
+	// REVISION: privileged-socket-v13-agent-link
+	mux.HandleFunc("/agents", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleAgentsForPTY(w, r, session, entry.PTYID, "")
+	})
+	mux.HandleFunc("/agents/", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleAgentsForPTY(w, r, session, entry.PTYID, strings.TrimPrefix(r.URL.Path, "/agents/"))
 	})
 
 	// /tools-changed → broadcast tools_changed event.

@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v22-browser-canvas-zspace
-console.log(`[canvas] REVISION: canvas-v22-browser-canvas-zspace loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v23-agent-block
+console.log(`[canvas] REVISION: canvas-v23-agent-block loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -64,6 +64,7 @@ import { TwitterBlock } from "@/components/blocks/TwitterBlock";
 import OutlookBlock from "@/components/blocks/OutlookBlock";
 import { OutlookCalendarBlock } from "@/components/blocks/OutlookCalendarBlock";
 import { BenchmarkBlock } from "@/components/blocks/BenchmarkBlock";
+import { AgentBlock } from "@/components/blocks/AgentBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -99,6 +100,7 @@ export const nodeTypes: NodeTypes = {
   outlook: OutlookBlock,
   outlook_calendar: OutlookCalendarBlock,
   benchmark: BenchmarkBlock,
+  agent: AgentBlock,
   cursor: CursorNode,
 };
 
