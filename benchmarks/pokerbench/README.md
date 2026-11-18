@@ -251,8 +251,11 @@ The dashboard:
   ```
 
   The helper ([`bin/seat`](bin/seat), published by the engine as `seat.sh`) finds its
-  seat, checks it in once the agent is signed in and at its prompt (it reads the end of
-  its own terminal's screen for setup questions still waiting), reports what's missing
+  seat, checks it in once the agent is signed in and at its prompt (it renders its own
+  terminal's current screen from the raw output, Orcabot's `/screen`, with
+  [`pokerbench/screen.py`](pokerbench/screen.py), and looks for a setup question still
+  waiting there: the output text alone keeps questions that were answered and redrawn
+  over), reports what's missing
   to the table until then, and at Start types the rendered prompt into its own
   terminal (Orcabot's self-input: a bracketed paste, then Enter). For a later game it
   first clears the agent's conversation (`/clear`, `/new`). The agent then plays through
