@@ -5,8 +5,8 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v10-signed-sandbox-requests
-console.log(`[dashboards] REVISION: dashboards-v10-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
+// REVISION: dashboards-v11-missing-template
+console.log(`[dashboards] REVISION: dashboards-v11-missing-template loaded at ${new Date().toISOString()}`);
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
@@ -184,6 +184,19 @@ export async function createDashbоard(
   ctx?: Pick<ExecutionContext, 'waitUntil'>,
   preferredRegion?: string,
 ): Promise<Response> {
+  // A template that no longer exists (deleted, or re-seeded under a new id while the
+  // dashboards page still listed the old one) used to give an empty dashboard without
+  // a word. Refuse instead, before creating anything. REVISION: dashboards-v11-missing-template
+  if (data.templateId) {
+    const template = await env.DB.prepare(`SELECT id FROM dashboard_templates WHERE id = ?`)
+      .bind(data.templateId).first<{ id: string }>();
+    if (!template) {
+      return Response.json(
+        { error: 'E79307: That template no longer exists (it may have just been updated). Reload the page and try again.' },
+        { status: 404 },
+      );
+    }
+  }
   const id = generateId();
   const now = new Date().toISOString();
 

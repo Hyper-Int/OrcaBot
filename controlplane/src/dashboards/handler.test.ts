@@ -49,6 +49,16 @@ describe('Dashboard Handlers', () => {
       expect(data.dashboard.createdAt).toBeTruthy();
       expect(data.dashboard.updatedAt).toBeTruthy();
     });
+
+    it('refuses a template that no longer exists, creating nothing', async () => {
+      // e.g. re-seeded under a new id while the dashboards page still listed the old one
+      const response = await createDashbоard(ctx.env, testUser.id, { name: 'Stale', templateId: 'gone' });
+      const data = await response.json() as { error: string };
+      expect(response.status).toBe(404);
+      expect(data.error).toContain('E79307');
+      const row = await ctx.db.prepare(`SELECT id FROM dashboards WHERE name = ?`).bind('Stale').first();
+      expect(row).toBeNull();
+    });
   });
 
   describe('Database operations', () => {
