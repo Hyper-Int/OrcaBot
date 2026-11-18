@@ -2,12 +2,12 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v7-no-rigging
+# REVISION: pokerbench-table-engine-v8-linked-seats
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
-# START=manual they are the defaults: the table page can change the game settings
-# (FORMAT through TURN_TIMEOUT) until someone presses Start.
+# START=manual they are the defaults: the table page changes the game settings
+# (FORMAT through TURN_TIMEOUT) and chooses what plays each seat until Start.
 #
 #   FORMAT       tournament | cash
 #   HANDS        tournament: hand limit; cash: deals (each replayed once per seat)
@@ -17,78 +17,42 @@
 #   SEED, TURN_TIMEOUT
 #   START        manual: the table is a lobby; seats check in when they're ready and the
 #                game starts when someone presses Start on the table page, with whoever
-#                is there. auto: it starts once every seat in SEATS has checked in.
-#   SEATS        every seat at the table, space-separated. Each is a seat terminal on
-#                the canvas with the same SEAT=: an agent (Claude Code, Codex, ...) or a
-#                model played through its provider's API. Seats report who they are.
-#                Agent blocks (outside agents: Grok Bot, Muse, Dots, ...) connected to
-#                this engine terminal on the canvas are seated too, named after the
-#                agent, and played from here by chat (pokerbench agent-seat). In the
-#                lobby, Agent blocks linked or connected later are seated too.
+#                is there. auto: it starts once every seat has checked in.
+#   SEATS        optional: seats that aren't linked (a sandbox that can't report links, or
+#                outside Orcabot). Normally empty: the players are the terminals and
+#                Agent blocks linked to this engine terminal (pokerbench host).
 #   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV (in PUB: model
 #   seats run the API player from it)
 #
-# Seats find the engine through $PUB/engine.env, which also lists who is seated and
-# says when the game has started (POKER_STARTED=1; POKER_SEATS is then final).
+# Seats find the engine through $PUB/engine.env and their seat through $PUB/seats.json,
+# and run $PUB/seat.sh (bin/seat).
 set -u
 START="${START:-manual}"
-REVISION=pokerbench-table-engine-v7-no-rigging
+REVISION=pokerbench-table-engine-v8-linked-seats
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
-SRC="$PRIV/src/benchmarks/pokerbench/pokerbench"
+SRC="$PRIV/src/benchmarks/pokerbench"
 
 die() { echo "Config error: $*"; echo "Edit the settings at the top of this terminal's boot command and restart it."; exit 1; }
 case "$FORMAT" in tournament|cash) ;; *) die "FORMAT must be tournament or cash (got '$FORMAT')";; esac
 case "$HONEYPOTS" in off|hidden|obvious) ;; *) die "HONEYPOTS must be off, hidden or obvious";; esac
 case "$START" in manual|auto) ;; *) die "START must be manual or auto (got '$START')";; esac
 
-SEATS_LIST="${SEATS:-}"; unset SEATS; read -r -a SEATS <<<"$SEATS_LIST"
-# Agent blocks connected to this terminal: "seat identity" per line.
-AGENT_SEATS=()
-while read -r seat identity; do
-  [ -n "$seat" ] || continue
-  case " ${SEATS[*]} " in *" $seat "*) ;; *) SEATS+=("$seat");; esac
-  AGENT_SEATS+=("$seat|$identity")
-done < <("$PB" agents 2>/dev/null)
-N=${#SEATS[@]}
-LEAST=2; [ "$START" = manual ] && LEAST=0  # a lobby can fill up from Agent blocks
-[ "$N" -ge "$LEAST" ] && [ "$N" -le 10 ] || die "a table needs 2 to 10 SEATS; got $N"
-for s in "${SEATS[@]}"; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
-DUP=$(printf '%s\n' "${SEATS[@]}" | sort | uniq -d | head -1); [ -z "$DUP" ] || die "seat '$DUP' appears twice"
+read -r -a STATIC <<<"${SEATS:-}"
+for s in ${STATIC[@]+"${STATIC[@]}"}; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
+[ "$START" = manual ] || [ "${#STATIC[@]}" -ge 2 ] || die "START=auto needs SEATS (2 to 10 names)"
 join() { local IFS="$1"; shift; echo "$*"; }
-# One field of the engine's public state (/api/spectate), or "" if it's not up.
-spectate() { curl -sf "http://127.0.0.1:$PORT/api/spectate" | "$VENV/bin/python" -c "$1" 2>/dev/null; }
-render_prompt() {  # players [condition format]
-  "$PB" prompt --condition "${2:-$CONDITION}" --players "$(( $1 < 2 ? 2 : $1 ))" --format "${3:-$FORMAT}"
-}
-# The game's settings as the table page left them (needs the control token: seats can't
-# read them, since a "hidden" honeypot must stay hidden).
-settings() {
-  curl -sf -H "X-Poker-Control: $(cat "$PRIV/control.token")" "http://127.0.0.1:$PORT/api/table/settings" \
-    | "$VENV/bin/python" -c "$1" 2>/dev/null
-}
-SUMMARY='import json,sys; d=json.load(sys.stdin); print("%s, %d hands%s, condition %s, honeypots %s, %gs per decision, seed %d" % (d["format"], d["hands"], ", blinds up every %d" % d["level_hands"] if d["format"] == "tournament" else "", d["condition"], d["honeypots"], d["turn_timeout"], d["seed"]))'
 
-write_env() {  # started (0|1), seats...
-  local started=$1; shift
-  { printf 'POKER_URL=http://127.0.0.1:%s\n' "$PORT"
-    printf 'POKER_TOKENS_DIR=%s\n' "$PRIV/tokens"
-    printf 'POKER_GAME=%s\n' "$GAME"
-    printf 'POKER_SEATS="%s"\n' "$*"
-    printf 'POKER_STARTED=%s\n' "$started"
-    printf 'POKER_PB=%s\n' "$PB"; } > "$PUB/engine.env.new"
-  chmod 644 "$PUB/engine.env.new" && mv -f "$PUB/engine.env.new" "$PUB/engine.env"
-}
-
-# Publish the seat client, the rendered prompt and the engine's address (read-only to seats).
+# Publish what seats run and read (read-only to them): the poker client, the seat script,
+# the prompt (rendered again at the start for the players and condition chosen then).
 mkdir -p "$PUB/bin" && chmod 755 "$PUB" "$PUB/bin"
-cp "$SRC/cli.py" "$PUB/poker_cli.py"
+cp "$SRC/pokerbench/cli.py" "$PUB/poker_cli.py"
 printf '#!/bin/sh\nexec python3 %s/poker_cli.py "$@"\n' "$PUB" > "$PUB/bin/poker"
-render_prompt "$N" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
-chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/prompt.txt"
+cp "$SRC/bin/seat" "$PUB/seat.sh"
+"$PB" prompt --condition "$CONDITION" --players 2 --format "$FORMAT" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
+chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/prompt.txt"
 GAME="$(date -u +%Y%m%d-%H%M%S)"; RUN="$PRIV/runs/$GAME"
-rm -rf "$PRIV/tokens" "$PRIV/control.token"
-write_env 0 "${SEATS[@]}"
+rm -rf "$PRIV/tokens" "$PRIV/control.token" "$PUB/seats.json" "$PUB/engine.env"  # the host writes them
 
 # Results: the engine's own directory, plus seats/ where seats may drop their own logs
 # (model seats copy their call logs there once the game is over). Sticky, so a seat
@@ -96,7 +60,7 @@ write_env 0 "${SEATS[@]}"
 OUT="/workspace/pokerbench-results/$GAME"
 mkdir -p "$OUT/seats" && chmod 755 "$OUT" && chmod 1777 "$OUT/seats"
 
-ARGS=(--seats "$(join , "${SEATS[@]}")" --format "$FORMAT"
+ARGS=(--seats "$(join , ${STATIC[@]+"${STATIC[@]}"})" --format "$FORMAT"
       --condition "$CONDITION" --honeypots "$HONEYPOTS" --seed "$SEED" --turn-timeout "$TURN_TIMEOUT"
       --port "$PORT" --run-dir "$RUN" --tokens-dir "$PRIV/tokens" --exit-when-done
       --start "$START" --control-token-file "$PRIV/control.token")
@@ -104,11 +68,10 @@ if [ "$FORMAT" = tournament ]; then ARGS+=(--hands "$HANDS" --level-hands "$LEVE
 
 if [ "$START" = manual ]; then
   echo "== PokerBench table. Defaults: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS"
-  echo "   (change them on the table page before you press Start)"
+  echo "   (change them with Settings on the table page before you press Start)"
 else
   echo "== PokerBench: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS =="
 fi
-echo "   seats: ${SEATS[*]:-(none yet)}"
 "$PB" serve "${ARGS[@]}" &
 ENGINE=$!
 until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
@@ -116,63 +79,16 @@ until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
   sleep 1
 done
 
-# Agent blocks play from here: each seat chats with its agent through Orcabot's sandbox.
-PIDS=()
-start_agent_seat() {  # seat identity
-  local seat=$1 identity=$2
-  until [ -s "$PRIV/tokens/$seat.token" ]; do sleep 1; done
-  ( "$PB" agent-seat --agent "$identity" --seat "$seat" --token-file "$PRIV/tokens/$seat.token" \
-      --url "http://127.0.0.1:$PORT" --log "$RUN/$seat.calls.jsonl" < /dev/null 2>&1 | sed -u "s/^/[$seat] /" ) &
-  PIDS+=($!)
-  echo "   agent seat $seat: $identity"
-}
-for as in ${AGENT_SEATS[@]+"${AGENT_SEATS[@]}"}; do start_agent_seat "${as%%|*}" "${as#*|}"; done
-
-STATUS='import json,sys; print(json.load(sys.stdin)["status"])'
-if [ "$START" = manual ]; then
-  echo
-  echo "Open the table (the browser block, http://localhost:$PORT/). Each seat checks in"
-  echo "when it's ready. Set up the game there, then press Start to play with the players"
-  echo "at the table. Pause and Resume are on the table page too."
-else
-  echo "The game starts when every seat has checked in. Table: http://localhost:$PORT/"
-fi
-
-# The lobby: until the game starts, seat Agent blocks linked or connected since.
-shown=; shown_settings=$(settings "$SUMMARY")
-while [ "$(spectate "$STATUS")" = waiting_for_players ]; do
-  while read -r seat identity; do
-    [ -n "$seat" ] || continue
-    case " ${SEATS[*]-} " in *" $seat "*) continue;; esac
-    if curl -sf -o /dev/null -X POST -H "X-Poker-Control: $(cat "$PRIV/control.token")" \
-         -H 'Content-Type: application/json' -d "{\"seat\": \"$seat\"}" "http://127.0.0.1:$PORT/api/table/seats"; then
-      SEATS+=("$seat"); write_env 0 "${SEATS[@]}"; start_agent_seat "$seat" "$identity"
-    fi
-  done < <("$PB" agents 2>/dev/null)
-  ready=$(spectate 'import json,sys; d=json.load(sys.stdin); print(", ".join(d["joined"]) or "nobody yet")')
-  [ "$ready" = "$shown" ] || echo "   ready: $ready"
-  shown=$ready
-  now=$(settings "$SUMMARY")
-  [ -z "$now" ] || [ "$now" = "$shown_settings" ] || { echo "   settings: $now"; shown_settings=$now; }
-  kill -0 $ENGINE 2>/dev/null || break
-  sleep 3
-done
-
-# Started: the seats and settings are final. Render the prompt for this table size and
-# the condition chosen on the table page, then tell the seats.
-FINAL=$(spectate 'import json,sys; print(" ".join(json.load(sys.stdin)["seats"]))')
-if [ -n "$FINAL" ]; then
-  read -r -a FINAL_SEATS <<<"$FINAL"
-  read -r COND FMT <<<"$(settings 'import json,sys; d=json.load(sys.stdin); print(d["condition"], d["format"])')"
-  render_prompt "${#FINAL_SEATS[@]}" "${COND:-}" "${FMT:-}" > "$PUB/prompt.txt.new" && chmod 644 "$PUB/prompt.txt.new" \
-    && mv -f "$PUB/prompt.txt.new" "$PUB/prompt.txt"
-  write_env 1 "${FINAL_SEATS[@]}"
-  echo "== Started: ${FINAL_SEATS[*]}"
-  echo "   $(settings "$SUMMARY")"
-fi
+echo
+echo "Players: every terminal and Agent block linked to this engine terminal takes a seat."
+echo "Open the table (the browser block, http://localhost:$PORT/): click a seat to choose what"
+echo "plays it, Settings to set up the game, then Start. Pause and Resume are there too."
+"$PB" host --url "http://127.0.0.1:$PORT" --control-token-file "$PRIV/control.token" --pub "$PUB" \
+  --tokens-dir "$PRIV/tokens" --run-dir "$RUN" --game "$GAME" --pb "$PB" --seats "${SEATS:-}" --engine-pid $ENGINE &
+HOST=$!
 
 wait $ENGINE
-for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done
+kill $HOST 2>/dev/null; wait $HOST 2>/dev/null
 cp -R "$RUN"/. "$OUT"/ && chmod -R a+rX "$OUT"
 echo; cat "$OUT/report.md" 2>/dev/null
 echo "Results: $OUT"

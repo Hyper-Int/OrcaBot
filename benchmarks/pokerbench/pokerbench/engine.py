@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v10-no-rigging
+# REVISION: pokerbench-engine-v11-linked-seats
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -47,9 +47,10 @@ from typing import Callable
 from pokerkit import Automation, Card, Deck, HandHistory, Mode, NoLimitTexasHoldem
 
 from . import REVISION as PACKAGE_REVISION
+from .players import PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v10-no-rigging"
+ENGINE_REVISION = "pokerbench-engine-v11-linked-seats"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -559,6 +560,12 @@ class Match:
         # Used where --seat-info gives none. Self-reported: a seat can mislabel itself.
         self.reported_info: dict[str, str] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
+        # What plays in each seat ({"kind": "claude-code", "model": ...}, players.py), chosen
+        # on the table page before the start; a seat terminal's own PLAYER= is the default.
+        self.players: dict[str, dict] = {}
+        self.player_rev: dict[str, int] = {}  # bumped on each change, so the seat switches
+        # Why a seat isn't ready yet, as the seat reports it: {"state": "needs", "message": ...}.
+        self.seat_status: dict[str, dict] = {}
         # OS user each seat is bound to (first request wins); None where unknown.
         self.seat_uids: dict[str, int | None] = {}
         self.engine_uid = os.getuid() if hasattr(os, "getuid") else None
@@ -599,10 +606,12 @@ class Match:
             "finish_reason": self.finish_reason,
             "isolation": self._isolation(),
             "reported_seat_info": dict(self.reported_info),
+            "players": dict(self.players),
         }
 
     def labels(self) -> dict[str, str]:
-        return {**self.reported_info, **dict(self.cfg.seat_info)}
+        chosen = {s: player_label(p) for s, p in self.players.items() if p}
+        return {**chosen, **self.reported_info, **dict(self.cfg.seat_info)}
 
     def _bump(self) -> None:
         self.version += 1
@@ -690,6 +699,7 @@ class Match:
             if seat in self.joined:
                 return
             self.joined.add(seat)
+            self.seat_status.pop(seat, None)
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_joined", "seat": seat})
             self._maybe_start()
 
@@ -720,11 +730,16 @@ class Match:
         for gone in [s for s in self.seat_uids if s not in cfg.seats]:
             del self.seat_uids[gone]
         self.joined &= set(cfg.seats)
+        for table in (self.seat_status,):
+            for gone in [s for s in table if s not in cfg.seats]:
+                del table[gone]
         self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
 
-    def add_seat(self, seat: str) -> bool:
-        """Add a seat while the table is waiting for players (e.g. an Agent block linked
-        after the engine started). True if it was added, False if already there."""
+    def add_seat(self, seat: str, uid: int | None = None, player: dict | None = None) -> bool:
+        """Add a seat while the table is waiting for players: a terminal or Agent block
+        linked to the engine. ``uid``: the OS user the seat's terminal runs as (Orcabot's
+        PTY pool), so only that user can play it. ``player``: what plays it, if known (an
+        Agent block). True if it was added, False if already there."""
         with self.cond:
             if self.status != "waiting_for_players":
                 raise ActionError("already_started", "The game has already started.")
@@ -734,10 +749,105 @@ class Match:
                 return False
             if len(self.cfg.seats) >= MAX_SEATS:
                 raise ActionError("table_full", f"The table is full ({MAX_SEATS} seats).")
+            if player is not None:
+                try:
+                    player = normalize_player(player, allow_agent=True)
+                except PlayerError as e:
+                    raise ActionError("bad_player", str(e))
             self._reseat(replace(self.cfg, seats=self.cfg.seats + (seat,)))
-            self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_added", "seat": seat})
+            if player is not None:
+                self.players[seat] = player
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_added", "seat": seat,
+                                             **({"player": player} if player else {})})
+            if uid is not None:
+                self._bind(seat, uid)
             self._bump()
             return True
+
+    def remove_seat(self, seat: str) -> bool:
+        """Take a seat away before the start (its terminal or Agent block was unlinked)."""
+        with self.cond:
+            if self.status != "waiting_for_players":
+                raise ActionError("already_started", "The game has already started.")
+            if seat not in self.cfg.seats:
+                return False
+            self._reseat(replace(self.cfg, seats=tuple(s for s in self.cfg.seats if s != seat)))
+            self.players.pop(seat, None)
+            self.reported_info.pop(seat, None)
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_removed", "seat": seat})
+            self._bump()
+            return True
+
+    def bind_seat(self, seat: str, uid: int) -> bool:
+        """The OS user a seat's terminal runs as (from the canvas link). Also during the
+        game: a restarted terminal gets a new PTY user and plays on as the new one."""
+        with self.cond:
+            if seat not in self.cfg.seats:
+                return False
+            if self.seat_uids.get(seat, "unbound") == uid:
+                return False
+            self._bind(seat, uid)
+            self._bump()
+            return True
+
+    def _bind(self, seat: str, uid: int) -> None:
+        old = self.seat_uids.get(seat)
+        self.seat_uids[seat] = uid
+        self.integrity("seat_bound", seat=seat, uid=uid, via="link", **({"previous_uid": old} if old else {}))
+
+    def set_player(self, seat: str, player: dict, uid: int | None = None) -> dict:
+        """Choose what plays a seat, from the table page, before the start. The seat's
+        terminal sees the change and checks in again as the new player."""
+        with self.cond:
+            if self.status != "waiting_for_players":
+                raise ActionError("already_started", "The game has already started; players are fixed.")
+            self._check_controller(uid, "choose the players of", "player_change")
+            if seat not in self.cfg.seats:
+                raise ActionError("unknown_seat", f"No seat {seat!r} at this table.")
+            if (self.players.get(seat) or {}).get("kind") == "agent":
+                raise ActionError("bad_player", "An Agent block always plays as itself.")
+            try:
+                player = normalize_player(player)
+            except PlayerError as e:
+                raise ActionError("bad_player", str(e))
+            if self.players.get(seat) == player:
+                return self._player_view(seat)
+            self.players[seat] = player
+            self.player_rev[seat] = self.player_rev.get(seat, 0) + 1
+            self.reported_info.pop(seat, None)
+            if seat in self.joined:  # it checks in again once it can play as the new player
+                self.joined.discard(seat)
+            self.seat_status[seat] = {"state": "switching", "message": f"Switching to {player_label(player)}..."}
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "player_set", "seat": seat, "uid": uid,
+                                             "player": player})
+            self._bump()
+            return self._player_view(seat)
+
+    def _player_view(self, seat: str) -> dict:
+        return {"seat": seat, "player": self.players.get(seat), "rev": self.player_rev.get(seat, 0),
+                "status": self.status, "in_game": seat in self.cfg.seats}
+
+    def seat_setup(self, seat: str, default: dict | None = None) -> dict:
+        """What a seat's terminal should play. Its own default (PLAYER= in the terminal)
+        is used until the table page chooses something else."""
+        with self.cond:
+            if seat not in self.players and default and self.status == "waiting_for_players":
+                try:
+                    self.players[seat] = normalize_player(default)
+                    self._bump()
+                except PlayerError:
+                    pass  # a bad default: the table page shows the seat without a player
+            return self._player_view(seat)
+
+    def report_seat_status(self, seat: str, state: str, message: str = "") -> None:
+        """A seat that can't play yet says why (shown on the table page)."""
+        with self.cond:
+            if state not in ("needs", "checking") or seat in self.joined:
+                return
+            status = {"state": state, "message": re.sub(r"[\x00-\x1f]", " ", str(message))[:300]}
+            if self.seat_status.get(seat) != status:
+                self.seat_status[seat] = status
+                self._bump()
 
     def _check_controller(self, uid: int | None, what: str, event: str | None = None) -> None:
         """The table page starts and pauses the game and sets it up; a seat's OS user may
@@ -943,7 +1053,11 @@ class Match:
                     return None, "token_uid_mismatch"
                 return token_seat, "token"
             if uid is not None:
-                owned = [s for s, u in self.seat_uids.items() if u == uid]
+                # The engine's own user (every terminal is root outside Orcabot's PTY pool):
+                # it says nothing about which seat a request is for, so several seats may
+                # claim as it, by name. It's recorded, and the run is reported as not isolated.
+                shared = uid == self.engine_uid
+                owned = [] if shared else [s for s, u in self.seat_uids.items() if u == uid]
                 if len(owned) == 1:
                     if claim and claim != owned[0]:
                         # An OS user that holds one seat asking to act as the other.
@@ -956,12 +1070,14 @@ class Match:
                             return None, "not_seated"  # a seat terminal that missed the deal
                         self.integrity("claim_rejected", seat=claim, uid=uid, reason="unknown seat")
                         return None, "unknown_seat"
-                    if claim in self.seat_uids:
+                    bound = self.seat_uids.get(claim, "unbound")
+                    if bound != "unbound" and not (shared and bound == uid):
                         self.integrity("claim_rejected", seat=claim, uid=uid, reason="seat already bound",
-                                       bound_uid=self.seat_uids[claim])
+                                       bound_uid=bound)
                         return None, "seat_taken"
-                    self.seat_uids[claim] = uid
-                    self.integrity("seat_bound", seat=claim, uid=uid, via="claim")
+                    if bound == "unbound":
+                        self.seat_uids[claim] = uid
+                        self.integrity("seat_bound", seat=claim, uid=uid, via="claim")
                     return claim, "claim"
             return None, "unauthenticated"
 
@@ -1153,6 +1269,8 @@ class Match:
                 "seats": list(self.cfg.seats),
                 "labels": self.labels(),
                 "joined": sorted(self.joined),
+                "players": {s: {**p, "label": player_label(p)} for s, p in self.players.items() if s in self.cfg.seats},
+                "seat_status": dict(self.seat_status),
                 "hand": self.hand.number if self.hand else None,
                 "hands_total": len(self.plans),
                 "big_blind": self.cfg.big_blind,
