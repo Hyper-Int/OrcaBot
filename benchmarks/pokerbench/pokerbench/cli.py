@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v9-match-over-stop
+# REVISION: pokerbench-cli-v11-resume-sit-out
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -12,7 +12,18 @@
     poker act allin
     poker history [n]               your last n hands
 
-Add --reason "..." to ``act`` to record why. Add --json for machine output.
+Anything after the action (and a bet or raise's total) is the reason, recorded with
+the decision: ``poker act call "pot odds are good"``.
+
+Nothing ``poker`` prints shows a flag. Gemini CLI asks before running a command with
+a flag that appeared in earlier command output (even in YOLO mode; once per flag and
+command name, again after /clear), so a flag in our help or turn text meant a prompt
+for the user mid-game. The old flags still work (--reason, --json, wait --timeout);
+they're just hidden from the help.
+
+The engine terminal may restart mid-game and carry the game on (RESUME=auto), with new
+seat tokens: the client waits for it to come back (a connection refused is retried) and
+reads a token file again when its token is refused.
 Config: POKER_URL (default http://127.0.0.1:8765); POKER_SEAT (your seat name);
 POKER_SEAT_TOKEN or POKER_TOKEN_FILE where a token is used. In Orcabot's PTY
 pool the engine identifies you by your OS user and no token is needed.
@@ -28,11 +39,12 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v9-match-over-stop"
+CLI_REVISION = "pokerbench-cli-v11-resume-sit-out"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
 DEFAULT_WAIT_S = 100.0
+RETRY_EVERY_S = 3.0
 
 RULES = """\
 PokerBench -- heads-up no-limit Texas hold'em, you against one opponent.
@@ -49,7 +61,7 @@ PokerBench -- heads-up no-limit Texas hold'em, you against one opponent.
 - Each deal is played twice with the seats swapped (duplicate poker), so luck
   mostly cancels out.
 
-Loop: `poker wait` -> decide -> `poker act <action> [amount] --reason "<why>"`
+Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 -> `poker wait` again, until the match is over.
 """
 
@@ -69,7 +81,7 @@ PokerBench -- a heads-up no-limit Texas hold'em TOURNAMENT, you against one oppo
 - You have {timeout:.0f} seconds per decision. If time runs out you check if that
   is free, otherwise you fold.
 
-Loop: `poker wait` -> decide -> `poker act <action> [amount] --reason "<why>"`
+Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 -> `poker wait` again, until the tournament is over.
 """
 
@@ -97,7 +109,7 @@ PokerBench -- {n}-player no-limit Texas hold'em, you against {others} opponents.
 - Each deal is replayed with the seats rotated so every player holds every hand
   from every position (duplicate poker), so luck mostly cancels out.
 
-Loop: `poker wait` -> decide -> `poker act <action> [amount] --reason "<why>"`
+Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 -> `poker wait` again, until the match is over.
 """
 
@@ -120,15 +132,24 @@ PokerBench -- a {n}-player no-limit Texas hold'em TOURNAMENT, you against {other
 - You have {timeout:.0f} seconds per decision. If time runs out you check if that
   is free, otherwise you fold.
 
-Loop: `poker wait` -> decide -> `poker act <action> [amount] --reason "<why>"`
+Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 -> `poker wait` again, until the tournament is over.
 """
+
+
+SIT_OUT = """\
+- If you miss {n} turns in a row you sit out: you get only {t:.0f} seconds per
+  decision until you act in time again. Other players are waiting on you, so
+  answer promptly."""
 
 
 def rules_text(m: dict, for_cli: bool = True) -> str:
     """The rules for this match. for_cli=False drops the `poker` command loop
     (direct model seats answer one decision at a time, with no shell)."""
     text = _rules_text(m)
+    if m.get("sit_out_after"):
+        line = "is free, otherwise you fold.\n"
+        text = text.replace(line, line + SIT_OUT.format(n=m["sit_out_after"], t=m.get("sit_out_timeout_s", 30)) + "\n", 1)
     return text if for_cli else text.split("\nLoop:")[0].rstrip() + "\n"
 
 
@@ -206,25 +227,69 @@ def _published() -> dict:
     return out
 
 
+def _refused(e: BaseException) -> bool:
+    """The engine isn't listening (it exited, or is restarting)."""
+    reason = getattr(e, "reason", e)
+    return isinstance(reason, (ConnectionRefusedError, ConnectionResetError))
+
+
 class Client:
     def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 70.0,
-                 seat: str | None = None, info: str | None = None):
+                 seat: str | None = None, info: str | None = None, retry_s: float = 0.0,
+                 token_file: str | None = None):
         found = _published() if not (url or os.environ.get("POKER_URL")) or not (
             seat or os.environ.get("POKER_SEAT")) else {}
         self.url = (url or os.environ.get("POKER_URL") or found.get("POKER_URL") or DEFAULT_URL).rstrip("/")
         self.seat = seat if seat is not None else (os.environ.get("POKER_SEAT") or found.get("POKER_SEAT") or None)
         self.token = token if token is not None else _token()
+        # Where the token came from, to read it again after an engine restart (new tokens).
+        self.token_file = token_file or (os.environ.get("POKER_TOKEN_FILE") if token is None else None)
         if self.token is None and self.seat and found.get("POKER_TOKENS_DIR"):
+            path = os.path.join(found["POKER_TOKENS_DIR"], f"{self.seat}.token")
             try:  # readable where seats share the engine's user (no PTY pool)
-                with open(os.path.join(found["POKER_TOKENS_DIR"], f"{self.seat}.token"), encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     self.token = f.read().strip() or None
+                self.token_file = path
             except OSError:
                 pass
+        # How long to keep trying while the engine isn't listening (it may be restarting).
+        self.retry_s = retry_s
         # Who is playing this seat, e.g. "anthropic/claude-code": self-reported, first one wins.
         self.info = info if info is not None else (os.environ.get("POKER_SEAT_INFO") or None)
         self.timeout = timeout
 
-    def _req(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _reload_token(self) -> bool:
+        """After an engine restart the seat tokens are new: read the file again."""
+        if not self.token_file:
+            return False
+        try:
+            with open(self.token_file, encoding="utf-8") as f:
+                token = f.read().strip() or None
+        except OSError:
+            return False
+        if token and token != self.token:
+            self.token = token
+            return True
+        return False
+
+    def _req(self, method: str, path: str, body: dict | None = None, retry_s: float | None = None) -> dict:
+        give_up = time.monotonic() + (self.retry_s if retry_s is None else retry_s)
+        reloaded = False
+        while True:
+            try:
+                return self._req_once(method, path, body)
+            except ApiError as e:
+                if e.status == 401 and not reloaded and self._reload_token():
+                    reloaded = True
+                    continue
+                raise
+            except (urllib.error.URLError, ConnectionError) as e:
+                if not _refused(e) or time.monotonic() + RETRY_EVERY_S > give_up:
+                    raise
+                time.sleep(RETRY_EVERY_S)
+                self._reload_token()
+
+    def _req_once(self, method: str, path: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.url + path, data=data, method=method)
         req.add_header("User-Agent", f"poker-cli/{CLI_REVISION}")
@@ -253,23 +318,37 @@ class Client:
         return self._req("GET", f"/api/seat/wait?timeout={timeout:.1f}")
 
     def act(self, action: str, amount: int | None = None, reason: str | None = None) -> dict:
+        """A move is never retried across an engine restart: the restarted engine deals the
+        hand again, and a move decided on the old one could be legal but wrong. A refused
+        connection means it wasn't made: look again (wait) and decide again."""
         body: dict = {"action": action}
         if amount is not None:
             body["amount"] = amount
         if reason:
             body["reason"] = reason
-        return self._req("POST", "/api/seat/act", body)
+        return self._req("POST", "/api/seat/act", body, retry_s=0)
 
     def history(self, n: int) -> dict:
         return self._req("GET", f"/api/seat/history?n={n}")
 
-    def wait_for_turn(self, total: float) -> dict:
+    def wait_for_turn(self, total: float, until_change: bool = False) -> dict:
+        """Wait up to ``total`` seconds for this seat's turn (or the end). ``until_change``:
+        also return as soon as the hand moves on (someone acted), polling every few
+        seconds, for seats that keep their player posted between turns."""
         deadline = time.monotonic() + total
+        mark = None
         while True:
             left = deadline - time.monotonic()
-            view = self.wait(max(0.0, min(WAIT_CHUNK_S, left)))
-            if view.get("to_act") or view["match"]["status"] == "finished" or left <= WAIT_CHUNK_S:
+            chunk = min(3.0, left) if until_change else min(WAIT_CHUNK_S, left)
+            view = self._req("GET", f"/api/seat/wait?timeout={max(0.0, chunk):.1f}",
+                             retry_s=max(self.retry_s, left))
+            if view.get("to_act") or view["match"]["status"] == "finished" or left <= chunk:
                 return view
+            if until_change:
+                now = (view["match"].get("hand"), len(view.get("actions") or []))
+                if mark is not None and now != mark:
+                    return view
+                mark = now
 
 
 # -- rendering ----------------------------------------------------------------
@@ -347,6 +426,12 @@ def render(view: dict) -> str:
     if m["status"] == "waiting_for_players":
         return ("Waiting for players to join: " + ", ".join(view.get("waiting_for", []))
                 + ". Run `poker wait` again.")
+    if view.get("resuming"):
+        r = view["resuming"]
+        waiting = ", ".join(r.get("waiting_for") or []) or "nobody"
+        return (f"The game is carrying on after the engine restarted: hand {r.get('next_hand')} is dealt as soon "
+                f"as every player is back (waiting for: {waiting}; at most {r.get('seconds_left', 0):.0f}s more). "
+                "Run `poker wait` again.")
     if m.get("paused") and m["status"] == "running" and not view.get("to_act"):
         return "The game is paused. Run `poker wait` again; it continues when the game resumes."
     if m["status"] == "finished":
@@ -415,10 +500,26 @@ def render(view: dict) -> str:
         if "fold" in legal:
             opts.append("fold")
         out.append(f"YOUR TURN ({view.get('seconds_left', '?')}s left). Options: " + " | ".join(opts))
-        out.append('Act with: poker act <action> [amount] --reason "<why>"')
+        out.append('Act with: poker act <action> [amount] "<why>"')
     else:
-        out.append(f"Waiting for {view.get('actor') or opp['seat']}. Run `poker wait`.")
+        out.append(f"Waiting for {view.get('actor') or opp['seat']}. " + turn_coming(view) + " Run `poker wait`.")
+    if view.get("sitting_out"):
+        out.append(sit_out_line(view))
     return "\n".join(out)
+
+
+def turn_coming(view: dict) -> str:
+    """When this seat's turn comes, while it isn't: 'Your turn: after 2 more players (within 75s).'"""
+    k = view.get("turn_in")
+    if k is None:
+        return "You have no turn on this street unless someone bets."
+    within = f" (within {view['turn_within_s']:.0f}s)" if view.get("turn_within_s") else ""
+    return f"Your turn: after {k} more player{'s' if k != 1 else ''}{within}."
+
+
+def sit_out_line(view: dict) -> str:
+    return (f"You missed {view.get('missed_turns')} turns in a row, so you are sitting out: you get "
+            f"{view.get('your_timeout_s', 30):.0f}s per decision until you act in time again.")
 
 
 def render_act(resp: dict) -> str:
@@ -445,23 +546,39 @@ def render_history(hands: list[dict], me: str) -> str:
 
 
 # -- entry point ----------------------------------------------------------------
+def act_args(action: str, rest: list[str], reason: str | None) -> tuple[int | None, str | None]:
+    """``poker act raise 300 because ...`` -> (300, "because ..."). A bet or raise's first
+    word is its total if it's a number; everything else is the reason (plus a --reason)."""
+    words = list(rest)
+    amount = None
+    if action in ("bet", "raise") and words and words[0].isdigit():
+        amount = int(words.pop(0))
+    said = " ".join(w for w in (" ".join(words).strip(), (reason or "").strip()) if w)
+    return amount, said or None
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="poker", description="Play PokerBench. Start with `poker rules`.")
-    p.add_argument("--json", action="store_true", help="print raw JSON")
+    p.add_argument("--json", action="store_true", help=argparse.SUPPRESS)  # raw JSON
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("rules", help="how the game works")
     sub.add_parser("state", help="show the table now")
     w = sub.add_parser("wait", help="block until it is your turn")
-    w.add_argument("--timeout", type=float, default=DEFAULT_WAIT_S, help="max seconds to wait (default 100)")
-    a = sub.add_parser("act", help="fold | check | call | bet N | raise N | allin")
+    w.add_argument("--timeout", type=float, default=DEFAULT_WAIT_S, help=argparse.SUPPRESS)
+    a = sub.add_parser("act", help='fold | check | call | bet N | raise N | allin, then a reason: poker act call "why"')
     a.add_argument("action", choices=["fold", "check", "call", "bet", "raise", "allin"])
-    a.add_argument("amount", nargs="?", type=int, help="street TOTAL for bet/raise")
-    a.add_argument("--reason", help="why (recorded with the decision)")
+    a.add_argument("rest", nargs="*", metavar="[total] why",
+                   help="bet/raise: the street TOTAL; then why (recorded with the decision)")
+    a.add_argument("--reason", help=argparse.SUPPRESS)
     h = sub.add_parser("history", help="your last N finished hands")
     h.add_argument("n", nargs="?", type=int, default=3)
     args = p.parse_args(argv)
+    if args.cmd == "act":
+        args.amount, args.reason = act_args(args.action, args.rest, args.reason)
 
-    client = Client()
+    # While the engine terminal restarts (it carries the game on), keep trying: `wait` for
+    # its whole wait, the rest for a minute (agents' shell tools time out at ~2 minutes).
+    client = Client(retry_s=args.timeout if args.cmd == "wait" else 60.0)
     if args.cmd != "rules" and not client.token and not client.seat:
         print("No seat: set POKER_SEAT (and POKER_TOKEN_FILE where tokens are used).", file=sys.stderr)
         return 1
@@ -496,10 +613,15 @@ def main(argv: list[str] | None = None) -> int:
         return 3 if e.body.get("error") == "not_your_turn" else 2
     except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
         print(f"Cannot reach the poker engine at {client.url}: {e}", file=sys.stderr)
-        if isinstance(getattr(e, "reason", e), ConnectionRefusedError):
-            # The engine exits once a game is over (or ended from the table page).
-            print("The engine isn't running, so there is no game now: stop playing and don't run `poker`"
-                  " again.", file=sys.stderr)
+        if _refused(e) and args.cmd == "act":
+            print("Your move wasn't made: the engine isn't answering (it may be restarting, and then the game "
+                  "carries on, with the hand dealt again). Run `poker wait` and decide again.", file=sys.stderr)
+        elif _refused(e):
+            # It exits once a game is over (every seat is shown MATCH OVER first), or it is
+            # restarting, and then carries the game on.
+            print("The engine isn't answering: it may be restarting, and then the game carries on. Run "
+                  "`poker wait` again. If it still isn't back after 10 minutes, the game is over: stop "
+                  "playing.", file=sys.stderr)
         return 1
 
 

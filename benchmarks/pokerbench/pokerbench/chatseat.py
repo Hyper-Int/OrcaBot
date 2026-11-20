@@ -1,14 +1,21 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v3-game-over
+# REVISION: pokerbench-chatseat-v4-live-game
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
 Each turn is one message: an intro the first time (the rules and how to answer),
 then the hands that finished since its last turn (as its seat saw them), then the
 current hand. The agent keeps the chat, so unlike a direct model seat it isn't
-re-sent its whole history. It answers with one line of JSON ``{"reason", "action",
+re-sent its whole history.
+
+These agents answer messages when they get round to them, and a table of players waits
+on each turn, so the intro says plainly that this is a live, timed game. Turns are
+numbered and the answer names its turn: a late answer to an earlier turn is ignored
+rather than played on the next one. Between its turns, while it is in a hand, the agent
+gets a short update as players act, with how soon its turn comes (no reply needed), so
+it can check its messages more often when its turn is close. It answers with one line of JSON ``{"reason", "action",
 "amount"}`` found anywhere in its reply, or an ``ACTION: raise 900`` line; chatter
 before the move ("thinking...") is skipped, and an unusable or illegal move goes back
 with the reason through the same loop as direct model seats (``llm.play``).
@@ -26,22 +33,31 @@ from collections.abc import Iterator
 
 from .llm import ACTIONS, Decision, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v3-game-over"
+CHATSEAT_REVISION = "pokerbench-chatseat-v4-live-game"
 
 INTRO = """\
-[PokerBench] Your owner has seated you at a poker table. Each time it's your turn \
-I'll message you here, and your reply is your move.
+[PokerBench] Your owner has seated you at a poker table. This is a LIVE, TIMED game: \
+{others} other players are at the table and the whole table waits for you on each of \
+your turns, so answer each turn as fast as you can.
 
 You are a poker player in {table}. Your goal is to win as many chips as possible.
 
 {rules}
-How to answer, every turn: reply with exactly one line of JSON and nothing else:
-{{"reason": "one short sentence", "action": "fold|check|call|bet|raise|allin", "amount": 0}}
-amount is only for bet or raise: the street TOTAL (raise 300 = raise to 300); otherwise 0.
-Answer within {timeout} seconds or your hand is checked or folded for you.
+How it works:
+- When it's your turn I send a message starting "[PokerBench] Turn N: your move". Reply \
+straight away with exactly one line of JSON and nothing else:
+  {{"turn": N, "reason": "one short sentence", "action": "fold|check|call|bet|raise|allin", "amount": 0}}
+  amount is only for bet or raise: the street TOTAL (raise 300 = raise to 300); otherwise 0.
+- You have {timeout} seconds from when that message is sent. Decide from what it shows: \
+don't research, browse or run tools. A late answer doesn't count (it is ignored): your \
+hand is checked or folded for you.
+- Between your turns, while you're in a hand, I send short updates as players act, with \
+how soon your turn comes. They need no reply; don't answer them. When your turn is close, \
+check your messages often so you see your turn as soon as it arrives.
 """
 
 HAND_NO = re.compile(r"Hand (\d+)\b")
+TURN_FIELD = re.compile(r'"turn"\s*:\s*"?(\d+)')
 JSON_OBJ = re.compile(r"\{[^{}]*\}", re.S)
 ACTION_LINE = re.compile(r"^\s*ACTION:\s*(fold|check|call|bet|raise|allin|all-in)\b\s*(\d+)?", re.I | re.M)
 
@@ -79,7 +95,8 @@ def intro_system(view: dict, timeout: float) -> str:
     table = ("a heads-up no-limit Texas hold'em match against one opponent" if n == 2 else
              f"a {n}-player no-limit Texas hold'em "
              f"{'tournament' if view['match'].get('format') == 'tournament' else 'game'} against {n - 1} opponents")
-    return INTRO.format(table=table, rules=rules_text(view["match"], for_cli=False), timeout=int(timeout))
+    return INTRO.format(table=table, rules=rules_text(view["match"], for_cli=False), timeout=int(timeout),
+                        others=n - 1)
 
 
 class ChatSeat:
@@ -98,6 +115,10 @@ class ChatSeat:
         self.turn_limit = reply_timeout or 150.0
         self.last_hand_sent = 0  # the agent has been sent every finished hand up to this one
         self.introduced = False
+        self.turn = 0  # numbered turns: an answer names its turn
+        self.turn_deadline: float | None = None  # set by llm.play: when the engine's clock runs out
+        self.view: dict = {}
+        self.updated: tuple | None = None  # (hand, actions seen) of the last update sent
 
     def _post(self, text: str) -> None:
         raise NotImplementedError
@@ -118,11 +139,26 @@ class ChatSeat:
                 self.last_hand_sent = int(m.group(1))
         if new:
             parts.append("Since your last turn:\n\n" + "\n\n".join(new))
+        head = f"[PokerBench] Turn {self.turn}: your move. Answer within {int(seconds)}s" if (
+            seconds := self._seconds_left()) else f"[PokerBench] Turn {self.turn}: your move"
+        head += f' with {{"turn": {self.turn}, ...}}.'
+        if self.view.get("sitting_out"):
+            head += (f" You missed your last {self.view.get('missed_turns')} turns, so you only get "
+                     f"{self.view.get('your_timeout_s', 30):.0f}s now until you answer one in time.")
+        parts.append(head)
         parts += blocks[idx:]
         return "\n\n".join(parts)
 
+    def _seconds_left(self) -> float | None:
+        left = [self.turn_limit]
+        if self.turn_deadline is not None:
+            left.append(self.turn_deadline - time.monotonic())
+        return max(1.0, min(left))
+
     def system_for(self, view: dict, system: str) -> str:
-        """llm.play hook: chat agents get an intro instead of the API system prompt."""
+        """llm.play hook, once per turn: chat agents get an intro instead of the API system prompt."""
+        self.turn += 1
+        self.view = view
         t = view.get("match", {}).get("turn_timeout_s")
         if t:
             table = max(5.0, t - 15 if t > 40 else t - 5)  # leave time to send the move
@@ -134,7 +170,10 @@ class ChatSeat:
         self.introduced = True
         self._post(text)
         last = None
-        for reply in self._replies(time.monotonic() + self.turn_limit):
+        for reply in self._replies(time.monotonic() + (self._seconds_left() or self.turn_limit)):
+            named = TURN_FIELD.search(reply or "")
+            if named and int(named.group(1)) != self.turn:
+                continue  # a late answer to an earlier turn
             last = reply
             try:
                 action, amount, reason = parse_reply(reply)
@@ -144,6 +183,26 @@ class ChatSeat:
         if last is not None:
             raise ProviderError(f"no move in the reply: {last[:200]!r}")
         raise ProviderError(f"no reply from {self.agent} within {self.turn_limit:.0f}s")
+
+    def between_turns(self, view: dict) -> None:
+        """llm.play hook while it isn't this seat's turn: when players have acted in a hand
+        the agent is still in, a short update with how soon its turn comes. Only after the
+        intro (the agent knows the game), and only while a turn is coming on this street."""
+        from .cli import _fmt_action, turn_coming
+
+        m = view.get("match") or {}
+        if (not self.introduced or m.get("status") != "running" or m.get("paused") or view.get("resuming")
+                or not view.get("you") or view.get("turn_in") is None):
+            return
+        hand, actions = m.get("hand"), view.get("actions") or []
+        seen = self.updated[1] if self.updated and self.updated[0] == hand else 0
+        if self.updated == (hand, len(actions)) or len(actions) <= seen:
+            return
+        me = view["you"]["seat"]
+        news = "; ".join(f"{_fmt_action(a, me)}" for a in actions[seen:])
+        self.updated = (hand, len(actions))
+        self._post(f"[PokerBench] Update (no reply needed): hand {hand}, {view.get('street')}: {news}. "
+                   f"{turn_coming(view)}")
 
     def game_over(self, view: dict) -> None:
         """Tell an agent that has played that the game is over (finished, or ended early

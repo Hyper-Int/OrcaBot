@@ -1,11 +1,13 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v13-agent-game-over
+# REVISION: pokerbench-main-v14-resume
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
     pokerbench serve --format tournament --hands 100 --condition pressure ...
+    pokerbench serve ... --resume   # carry on the run dir's unfinished game, if it has one
+    pokerbench resumable --runs DIR # the newest unfinished game in DIR (for the engine terminal)
     pokerbench prompt --condition pressure          # the prompt that goes with it
     pokerbench bot --strategy tight --token-file DIR/codex.token
     pokerbench report DIR
@@ -27,11 +29,14 @@ from pathlib import Path
 from . import REVISION
 from .bots import STRATEGIES, play
 from .cli import Client
-from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig
+from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig, load_checkpoint, resumable
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v13-agent-game-over"
+MAIN_REVISION = "pokerbench-main-v14-resume"
+# Seats that play from a process of their own (bots, API models, Agent blocks) wait this
+# long for an engine that isn't listening: it may be restarting, to carry the game on.
+SEAT_RETRY_S = 900.0
 
 
 HU_GAME = "a heads-up no-limit Texas hold'em match against another player"
@@ -108,14 +113,26 @@ def _add_match_args(p: argparse.ArgumentParser) -> None:
 
 
 def cmd_serve(args) -> int:
-    cfg = _config(args)
     run_dir = Path(args.run_dir)
-    match = Match(cfg, run_dir)
+    checkpoint = load_checkpoint(run_dir) if args.resume and resumable(run_dir) else None
+    if checkpoint:
+        # The game's own settings and players, not the command line's.
+        match = Match(MatchConfig.from_dict(checkpoint["config"]), run_dir, resume=checkpoint,
+                      rejoin_grace=args.rejoin_grace)
+        cfg = match.cfg
+        print(f"pokerbench resuming game {run_dir.name}: {len(match.results)} hands played, hand "
+              f"{match.hand_index + 2} next; waiting up to {args.rejoin_grace:g}s for "
+              f"{', '.join(match.alive())} to come back", flush=True)
+    else:
+        cfg = _config(args)
+        match = Match(cfg, run_dir)
     tokens = write_tokens(cfg.seats, Path(args.tokens_dir))
     control = write_control_token(Path(args.control_token_file)) if args.control_token_file else None
     srv = make_server(match, tokens, args.host, args.port, tokens_dir=Path(args.tokens_dir), control_token=control)
     who = " vs ".join(cfg.seats) if len(cfg.seats) == 2 else f"{len(cfg.seats)} seats ({', '.join(cfg.seats)})"
     when = "when Start is pressed on the table page" if cfg.start == "manual" else "once every seat has joined"
+    if checkpoint:
+        when = "carrying on once they're back"
     print(f"pokerbench serving {who}, starting {when}: {len(match.plans)} hands on "
           f"http://{args.host}:{srv.server_port}/  run dir {run_dir}  tokens {args.tokens_dir}", flush=True)
 
@@ -140,9 +157,23 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_resumable(args) -> int:
+    """The newest run in --runs that started and didn't finish (its directory name), or
+    nothing. The engine terminal resumes it instead of starting a new game."""
+    runs = Path(args.runs)
+    dirs = sorted((d for d in runs.iterdir() if d.is_dir()), key=lambda d: d.name, reverse=True) if runs.is_dir() else []
+    for d in dirs:
+        if resumable(d):
+            print(d.name)
+            return 0
+        if (d / "checkpoint.json").exists():
+            return 0  # the newest game that started is over: start a new one
+    return 0
+
+
 def cmd_bot(args) -> int:
     token = Path(args.token_file).read_text().strip() if args.token_file else None
-    client = Client(url=args.url, token=token)
+    client = Client(url=args.url, token=token, retry_s=SEAT_RETRY_S, token_file=args.token_file)
     final = play(client, args.strategy, seed=args.seed)
     print(json.dumps(final["score"]))
     return 0
@@ -159,7 +190,8 @@ def cmd_llm_seat(args) -> int:
     provider = make_provider(args.provider, args.model, args.effort, args.max_tokens)
     vendor = "google" if provider.name == "gemini" else provider.name
     info = os.environ.get("POKER_SEAT_INFO") or f"{vendor}/{provider.model} (API)"
-    client = Client(url=args.url, token=token, seat=args.seat, info=info)
+    client = Client(url=args.url, token=token, seat=args.seat, info=info, retry_s=SEAT_RETRY_S,
+                    token_file=args.token_file)
     print(f"llm-seat: {provider.name} {provider.model} (effort {provider.effort or 'default'})", flush=True)
     feed = None if args.quiet else (lambda line: print(line, flush=True))
     final = play_llm(client, provider, max_retries=args.max_retries,
@@ -201,7 +233,8 @@ def cmd_agent_seat(args) -> int:
     seat = AgentLinkSeat(args.agent, reply_timeout=args.reply_timeout)
     name = args.agent.rsplit(":", 1)[-1]
     info = os.environ.get("POKER_SEAT_INFO") or args.label or f"agent/{name} (Agent block)"
-    client = Client(url=args.url, token=token, seat=args.seat, info=info)
+    client = Client(url=args.url, token=token, seat=args.seat, info=info, retry_s=SEAT_RETRY_S,
+                    token_file=args.token_file)
     print(f"agent-seat: {name} plays {args.seat or os.environ.get('POKER_SEAT')}", flush=True)
     feed = None if args.quiet else (lambda line: print(line, flush=True))
     final = play_llm(client, seat, max_retries=args.max_retries,
@@ -221,7 +254,8 @@ def cmd_siren_seat(args) -> int:
                              device=args.device, phone=args.dev_phone, reply_timeout=args.reply_timeout,
                              say=lambda line: print(line, flush=True))
     info = os.environ.get("POKER_SEAT_INFO") or args.label or f"siren/{args.agent.rsplit(':', 1)[-1]} (Siren)"
-    client = Client(url=args.url, token=token, seat=args.seat, info=info)
+    client = Client(url=args.url, token=token, seat=args.seat, info=info, retry_s=SEAT_RETRY_S,
+                    token_file=args.token_file)
     feed = None if args.quiet else (lambda line: print(line, flush=True))
     try:
         final = play_llm(client, provider, max_retries=args.max_retries,
@@ -316,7 +350,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--control-token-file", help="write the engine's control token here (adds seats while waiting)")
     s.add_argument("--final-grace", type=float, default=600.0,
                    help="with --exit-when-done, max seconds to wait for seats to see the result")
+    s.add_argument("--resume", action="store_true",
+                   help="if --run-dir holds a game that started and didn't finish, carry it on")
+    s.add_argument("--rejoin-grace", type=float, default=240.0,
+                   help="a resumed game waits this long for its players to come back")
     s.set_defaults(fn=cmd_serve)
+
+    rs = sub.add_parser("resumable", help="print the newest unfinished game in a runs directory")
+    rs.add_argument("--runs", required=True)
+    rs.set_defaults(fn=cmd_resumable)
 
     b = sub.add_parser("bot", help="play a seat with a reference bot")
     b.add_argument("--strategy", choices=sorted(STRATEGIES), default="tight")

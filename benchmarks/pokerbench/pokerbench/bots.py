@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-bots-v1
+# REVISION: pokerbench-bots-v2-survive-restart
 """Simple reference bots.
 
 They drive the engine through exactly the same seat API as agents, so they are
@@ -16,9 +16,11 @@ from typing import Callable
 
 from pokerkit import Card, StandardHighHand
 
-from .cli import Client
+import urllib.error
 
-BOTS_REVISION = "pokerbench-bots-v1"
+from .cli import ApiError, Client
+
+BOTS_REVISION = "pokerbench-bots-v2-survive-restart"
 RANKS = "23456789TJQKA"
 
 Decision = tuple[str, "int | None", str]
@@ -99,6 +101,15 @@ def play(client: Client, strategy: str, seed: int = 0, max_wait: float = 600.0, 
         if not view.get("to_act"):
             continue
         action, amount, reason = decide(view, rng)
-        resp = client.act(action, amount, reason)
+        try:
+            resp = client.act(action, amount, reason)
+        except ApiError as e:
+            # The turn passed meanwhile: it timed out, or the engine restarted and dealt the
+            # hand again (the move was for the old one). Look again.
+            if e.body.get("error") in ("not_your_turn", "hand_over", "not_running"):
+                continue
+            raise
+        except (urllib.error.URLError, ConnectionError):
+            continue  # the engine is restarting: the move wasn't made; wait, then decide again
         if on_hand and resp.get("hand_result"):
             on_hand(resp["hand_result"])

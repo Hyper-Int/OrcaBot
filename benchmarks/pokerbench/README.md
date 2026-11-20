@@ -29,8 +29,11 @@ seat terminal (agent) ── poker CLI ──┘        │
   duplicated: each deal is played twice with the seats swapped, which cancels most of
   the luck.
 - **`poker` CLI**: what agents use. Commands are `poker rules`, `wait`, `state`,
-  `act fold|check|call|bet N|raise N|allin --reason "..."` and `history`. Bet and raise
-  amounts are street totals.
+  `act fold|check|call|bet N|raise N|allin "<why>"` and `history`. Bet and raise
+  amounts are street totals; anything after them is the reason (`--reason` works too).
+  Nothing `poker` prints shows a flag: Gemini CLI asks the user before running a
+  command with a flag that appeared in earlier command output, even in YOLO mode, so
+  a flag in the help or the turn text meant approval prompts mid-game.
 - **Spectator page** (`/`): the live table (hole cards hidden until the hand ends),
   the last hand fully revealed, a leaderboard and recent hands.
 - **Run directory**: the engine writes everything here. Keep it outside `/workspace`;
@@ -68,6 +71,37 @@ agent to stop and not run `poker` again; a late `poker act` is refused the same 
 an Agent block gets a "game over" message, and once the engine has exited `poker` says
 there is no game. The engine exits as soon as every seat has been told. The
 table routes are refused from a seat's OS user.
+
+**Long, unattended games.** Turn the dashboard's **Auto sleep** off (the menu bar;
+the benchmark templates start with it off) so nothing stops the VM or its terminals
+while nobody is watching. On top of that:
+- **Restarts carry the game on.** Between hands (and at the start) the engine saves
+  `checkpoint.json` in its run directory (`$PRIV/runs/<game>`, out of the seats' reach).
+  If the engine terminal restarts mid-game, `bin/table-engine` (`RESUME=auto`, the
+  default; `pokerbench resumable`) starts the engine with `serve --resume` on that game:
+  same settings, players, stacks, results and counters. The table waits up to
+  `REJOIN_GRACE` (240s) for the players to come back (the table page shows who it is
+  waiting for, with DEAL NOW and END GAME), then deals the hand that was in progress
+  again: a tournament from a fresh deck (players may have seen their cards and part of
+  the board), a cash game from the deal's own deck (its duplicate plays share it). The
+  report leaves out the decisions made in the interrupted hand and says how often the
+  game resumed. `RESUME=off` always starts a new game; End game finishes one for good.
+- **Seats ride it out.** New seat tokens are written on a restart. `poker` waits for an
+  engine that isn't answering (for the whole of a `wait`, a minute otherwise) and reads
+  its token file again when its token is refused; a move is never retried across a
+  restart (the hand is dealt again, so it could be legal but wrong): `poker act` says it
+  wasn't made, and the seat processes (bots, API models, Agent blocks) wait up to 15
+  minutes for the engine, then look again. A seat terminal that restarts mid-game rejoins:
+  a bot plays on, an agent terminal's helper gives the fresh agent the prompt with a note
+  that the game is under way, and an Agent block's seat process is started again by
+  `pokerbench host`.
+- **Sitting out.** A seat that lets 3 turns in a row time out (`sit_out_after`) sits out:
+  its turns get 30s (`sit_out_timeout`) instead of the turn timeout until it acts in time
+  again, so one absent or very slow player doesn't cost the table 5 minutes a turn. The
+  view, `poker` and the table page say so; `poker rules` explains it.
+- **How soon your turn comes.** Views carry `turn_in` (players who act before you on this
+  street; None: no turn unless someone bets) and `turn_within_s` (their clocks, at most);
+  `poker wait` prints "Your turn: after 2 more players (within 75s)."
 
 **Game settings:** in the lobby, `GET /api/table/settings` shows the format, hands,
 blind levels, turn timeout, condition, honeypot mode and seed, and `POST` changes any
@@ -377,13 +411,24 @@ engine terminal and it takes a seat.
   agent's last turn, then the current hand); the reply's one-line JSON (found anywhere
   in it, or an `ACTION:` line) is its move, through the same loop as direct model seats
   (`pokerbench/chatseat.py`).
+- **A live, timed game:** the intro says so plainly (the table waits on each of its
+  turns; answer straight away; no research or tools; a late answer doesn't count; the
+  sit-out rule). Turns are numbered ("Turn 12: your move. Answer within 280s with
+  {"turn": 12, ...}") and an answer naming another turn is ignored, so a late reply is
+  never played on the next turn. The wait is the engine's own clock for the turn, and
+  no second try or fallback move is sent once it has run out.
+- **Updates between turns:** while the agent is in a hand and has a turn coming on this
+  street, every time players act it gets a short "no reply needed" message with the
+  actions and how soon its turn comes ("Your turn: after 1 more player (within 40s)"),
+  so it can check its messages more often when its turn is close.
 - **Transport:** the seat talks to the sandbox's local agent API (Unix socket in pool
   mode, identified by its UID; otherwise TCP with the terminal's MCP secret), which only
   serves agents *that terminal* is connected to. The dashboard's VM is a linked device
   of its owner: messages are end-to-end encrypted between it and the agent, and to the
   agent it is its owner, so they wake it. The engine never holds keys.
 - **Timing:** outside agents answer in seconds (Grok, webhook) to a minute or two
-  (Muse, Dots, which poll). Raise TURN_TIMEOUT (300 or more) when seating one.
+  (Muse, Dots, which poll). Raise TURN_TIMEOUT (300 or more) when seating one. One that
+  stops answering sits out on a 30s clock after 3 missed turns (above).
 - **Verified:** the link end to end with no phone (an Orcabot-issued owner on a local
   hub, a real agent connector paired by code, the sandbox's client linked as the
   dashboard's device, chat both ways, including the agent messaging its owner
