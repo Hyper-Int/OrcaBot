@@ -9,6 +9,9 @@
  * is scrubbed to protect privacy.
  */
 
+// REVISION: templates-v2-auto-sleep
+console.log(`[templates] REVISION: templates-v2-auto-sleep loaded at ${new Date().toISOString()}`);
+
 import type { Env } from '../types';
 import { scrubItemContent, type DashboardItemType } from './scrubber';
 import starterTemplates from './starter-templates.json';
@@ -117,6 +120,12 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
       (t as { setupGuide?: string }).setupGuide ?? null,
       t.itemCount, now, now
     ).run();
+    // Benchmark starters run unattended: Auto sleep off (src/dashboards/auto-sleep.ts).
+    if ((t as { autoSleep?: boolean }).autoSleep === false) {
+      try {
+        await env.DB.prepare(`UPDATE dashboard_templates SET auto_sleep = 0 WHERE id = ?`).bind(t.id).run();
+      } catch { /* auto_sleep not migrated yet */ }
+    }
   }
   if (!seededBase) {
     await env.DB.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(baseMarker).run();
@@ -158,6 +167,8 @@ export interface DashboardTemplateWithData extends DashboardTemplate {
    * user through setup (clone a repo, sync deps, add keys, run a first job).
    */
   setupGuide?: string;
+  /** false: dashboards made from it start with Auto sleep off (benchmarks). */
+  autoSleep?: boolean;
 }
 
 function generateId(): string {
@@ -201,6 +212,8 @@ function formatTemplateWithData(
     edges: JSON.parse((row.edges_json as string) || '[]'),
     ...(viewport && { viewport }),
     ...(row.setup_guide ? { setupGuide: row.setup_guide as string } : {}),
+    ...(row.auto_sleep !== undefined && row.auto_sleep !== null && Number(row.auto_sleep) === 0
+      ? { autoSleep: false } : {}),
   };
 }
 
@@ -406,6 +419,14 @@ export async function createTemplate(
     )
     .run();
 
+  // The template keeps the dashboard's Auto sleep (off for unattended benchmark
+  // dashboards). Best effort: skipped until the auto_sleep columns exist.
+  try {
+    await env.DB.prepare(
+      `UPDATE dashboard_templates SET auto_sleep = COALESCE((SELECT auto_sleep FROM dashboards WHERE id = ?), 1) WHERE id = ?`
+    ).bind(data.dashboardId, templateId).run();
+  } catch { /* auto_sleep not migrated yet */ }
+
   return Response.json(
     {
       template: {
@@ -590,6 +611,17 @@ export async function populateFromTemplate(
         .run();
     } catch { /* dashboards.setup_guide not migrated yet */ }
   }
+
+  // A dashboard made from a template starts with the template's Auto sleep (off for
+  // the benchmark templates, whose runs go on unattended). Best effort: skipped until
+  // the auto_sleep columns exist. REVISION: templates-v2-auto-sleep
+  try {
+    const t = await env.DB.prepare(`SELECT auto_sleep FROM dashboard_templates WHERE id = ?`)
+      .bind(templateId).first<{ auto_sleep: number | null }>();
+    if (t && t.auto_sleep !== null && Number(t.auto_sleep) === 0) {
+      await env.DB.prepare(`UPDATE dashboards SET auto_sleep = 0 WHERE id = ?`).bind(dashboardId).run();
+    }
+  } catch { /* auto_sleep not migrated yet */ }
 
   // Increment template use count
   await env.DB.prepare(

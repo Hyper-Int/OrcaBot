@@ -11,7 +11,9 @@ import {
   createDashbоard,
   upsertItem,
   createEdge,
+  updateDashbоard,
 } from './handler';
+import { resetAutoSleepColumnCache } from './auto-sleep';
 import {
   createTestContext,
   seedUser,
@@ -58,6 +60,31 @@ describe('Dashboard Handlers', () => {
       expect(data.error).toContain('E79307');
       const row = await ctx.db.prepare(`SELECT id FROM dashboards WHERE name = ?`).bind('Stale').first();
       expect(row).toBeNull();
+    });
+  });
+
+  describe('Auto sleep', () => {
+    it('is on for a new dashboard and can be turned off and on by an editor', async () => {
+      resetAutoSleepColumnCache();
+      const created = await createDashbоard(ctx.env, testUser.id, { name: 'Bench' });
+      const { dashboard } = await created.json() as { dashboard: { id: string; autoSleep: boolean } };
+      expect(dashboard.autoSleep).toBe(true);
+
+      const off = await updateDashbоard(ctx.env, dashboard.id, testUser.id, { autoSleep: false });
+      expect(off.status).toBe(200);
+      expect((await off.json() as { dashboard: { autoSleep: boolean } }).dashboard.autoSleep).toBe(false);
+
+      const on = await updateDashbоard(ctx.env, dashboard.id, testUser.id, { autoSleep: true });
+      expect((await on.json() as { dashboard: { autoSleep: boolean } }).dashboard.autoSleep).toBe(true);
+    });
+
+    it('rejects a value that is not a boolean', async () => {
+      const created = await createDashbоard(ctx.env, testUser.id, { name: 'Bench' });
+      const { dashboard } = await created.json() as { dashboard: { id: string } };
+      const bad = await updateDashbоard(ctx.env, dashboard.id, testUser.id, { autoSleep: 'no' as unknown as boolean });
+      expect(bad.status).toBe(400);
+      // (Edit access is the same owner/editor check as renaming; the simplified D1
+      // mock can't model membership filtering, so it isn't asserted here.)
     });
   });
 

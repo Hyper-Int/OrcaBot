@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-api-v1-surface-token-ws
+// REVISION: dashboards-api-v2-auto-sleep
 
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiPut, apiDelete } from "../client";
@@ -38,6 +38,8 @@ interface DashboardCreateRequest {
 
 interface DashboardUpdateRequest {
   name?: string;
+  /** Auto sleep (menu bar checkbox): false keeps terminals running unwatched. */
+  autoSleep?: boolean;
 }
 
 interface ItemResponse {

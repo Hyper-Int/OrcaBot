@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS dashboards (
   -- the source cloud dashboard (for the downloaded ✓ state + two-way sync). NULL
   -- for purely-local dashboards.
   cloud_id TEXT,
+  -- Auto sleep: 1 = a dashboard nobody watches goes to sleep (default); 0 = its
+  -- terminals and VM keep running unattended (benchmark templates).
+  auto_sleep INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -781,6 +784,7 @@ CREATE TABLE IF NOT EXISTS dashboard_templates (
   edges_json TEXT NOT NULL DEFAULT '[]',
   viewport_json TEXT,
   setup_guide TEXT,
+  auto_sleep INTEGER NOT NULL DEFAULT 1,
   item_count INTEGER NOT NULL DEFAULT 0,
   is_featured INTEGER NOT NULL DEFAULT 0,
   use_count INTEGER NOT NULL DEFAULT 0,
@@ -1189,7 +1193,7 @@ CREATE INDEX IF NOT EXISTS idx_tts_ballots_voter ON tts_ballots(voter_hash, crea
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v17-agent-hub-owners";
+const SCHEMA_REVISION = "schema-v18-auto-sleep";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1605,6 +1609,25 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE dashboards ADD COLUMN setup_guide TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Auto sleep (src/dashboards/auto-sleep.ts): 1 = an unwatched dashboard sleeps (the
+  // default); 0 = its terminals and VM keep running unattended. Templates carry it so a
+  // dashboard made from a benchmark template starts with Auto sleep off.
+  // REVISION: schema-v18-auto-sleep
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboards ADD COLUMN auto_sleep INTEGER NOT NULL DEFAULT 1
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_templates ADD COLUMN auto_sleep INTEGER NOT NULL DEFAULT 1
     `).run();
   } catch {
     // Column already exists.

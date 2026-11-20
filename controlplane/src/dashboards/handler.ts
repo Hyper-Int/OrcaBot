@@ -5,8 +5,8 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v11-missing-template
-console.log(`[dashboards] REVISION: dashboards-v11-missing-template loaded at ${new Date().toISOString()}`);
+// REVISION: dashboards-v12-auto-sleep
+console.log(`[dashboards] REVISION: dashboards-v12-auto-sleep loaded at ${new Date().toISOString()}`);
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
@@ -15,6 +15,7 @@ import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { FlyMachinesClient } from '../sandbox/fly-machines';
 import { SandboxClient } from '../sandbox/client';
 import { preProvisionDashboardSandbox } from '../sessions/handler';
+import { autoSleepColumnReady, getDashboardAutoSleep, pushAutoSleepToSandbox, rowAutoSleep } from './auto-sleep';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -31,6 +32,7 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
     secretsCount: row.secrets_count !== undefined ? Number(row.secrets_count) : undefined,
     linkedCount: row.linked_count !== undefined ? Number(row.linked_count) : undefined,
     cloudId: (row.cloud_id as string | null) ?? null,
+    autoSleep: rowAutoSleep(row.auto_sleep),
   };
 }
 
@@ -248,6 +250,8 @@ export async function createDashbоard(
     ownerId: userId,
     createdAt: now,
     updatedAt: now,
+    // From the template (populateFromTemplate), else the default (on).
+    autoSleep: data.templateId ? await getDashboardAutoSleep(env, id) : true,
   };
 
   return Response.json({
@@ -262,7 +266,7 @@ export async function updateDashbоard(
   env: Env,
   dashboardId: string,
   userId: string,
-  data: { name?: string }
+  data: { name?: string; autoSleep?: boolean }
 ): Promise<Response> {
   // Check edit access
   const role = await getDashbоardRole(env, dashboardId, userId);
@@ -276,6 +280,22 @@ export async function updateDashbоard(
     await env.DB.prepare(`
       UPDATE dashboards SET name = ?, updated_at = ? WHERE id = ?
     `).bind(data.name, now, dashboardId).run();
+  }
+
+  // Auto sleep (menu bar checkbox). Off keeps the dashboard's terminals and VM running
+  // with nobody watching; the live sandbox session is told now (best effort; every
+  // terminal start carries it too). REVISION: dashboards-v12-auto-sleep
+  if (data.autoSleep !== undefined) {
+    if (typeof data.autoSleep !== 'boolean') {
+      return Response.json({ error: 'E79308: autoSleep must be true or false' }, { status: 400 });
+    }
+    if (!(await autoSleepColumnReady(env))) {
+      return Response.json({ error: 'E79309: Auto sleep is not available yet (database migration pending)' }, { status: 503 });
+    }
+    await env.DB.prepare(`
+      UPDATE dashboards SET auto_sleep = ?, updated_at = ? WHERE id = ?
+    `).bind(data.autoSleep ? 1 : 0, now, dashboardId).run();
+    await pushAutoSleepToSandbox(env, dashboardId, data.autoSleep);
   }
 
   const dashboardRow = await env.DB.prepare(`

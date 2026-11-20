@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v6-run-cleanup-all-paths
+// REVISION: hub-v7-auto-sleep-off
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const hubRevision = "hub-v6-run-cleanup-all-paths"
+const hubRevision = "hub-v7-auto-sleep-off"
 
 func init() {
 	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
@@ -102,8 +102,13 @@ type ToolsChangedEvent struct {
 }
 
 // IdleTimeout is how long a hub stays alive with no connected clients.
-// After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
+// After this duration with zero clients, the hub automatically stops to prevent goroutine leaks,
+// unless its dashboard has Auto sleep turned off (keepAwake reports true): then the
+// timer is re-armed and the terminal keeps running with nobody watching.
 const IdleTimeout = 600 * time.Second
+
+// idleTimeout is the timeout hubs use; tests shorten it.
+var idleTimeout = IdleTimeout
 
 // Hub manages multiple clients connected to a single PTY
 type Hub struct {
@@ -128,6 +133,11 @@ type Hub struct {
 	// Idle timeout: stops hub if no clients for IdleTimeout duration
 	idleTimer *time.Timer
 	idleChan  chan struct{}
+	// keepAwake, when set and true at the moment the idle timer fires, keeps the PTY
+	// running (the dashboard's Auto sleep is off). Checked at fire time, so turning
+	// Auto sleep back on takes effect at the next expiry.
+	// REVISION: hub-v7-auto-sleep-off
+	keepAwake func() bool
 
 	// onStop callbacks invoked when hub stops (for cleanup by owner)
 	onStop []func()
@@ -254,15 +264,34 @@ func (h *Hub) Run() {
 			// Start idle timer when last client disconnects
 			clientCount := len(h.clients)
 			if clientCount == 0 && h.idleTimer == nil {
-				h.idleTimer = time.AfterFunc(IdleTimeout, func() {
-					close(h.idleChan)
-				})
-				log.Printf("Hub: no clients, starting %v idle timeout", IdleTimeout)
+				h.armIdleTimerLocked()
+				log.Printf("Hub: no clients, starting %v idle timeout", idleTimeout)
 			}
 			h.mu.Unlock()
 
 		case <-h.idleChan:
-			// Idle timeout expired with no clients - stop to prevent goroutine leak
+			// Idle timeout expired with no clients. With Auto sleep off the terminal
+			// keeps running (re-arm and check again later); otherwise stop it to
+			// prevent a goroutine leak.
+			h.mu.Lock()
+			if len(h.clients) > 0 {
+				// A client connected as the timer fired (register stopped a timer that
+				// had already closed the channel): not idle after all.
+				h.idleChan = make(chan struct{})
+				h.idleTimer = nil
+				h.mu.Unlock()
+				continue
+			}
+			keep := h.keepAwake != nil && h.keepAwake()
+			if keep {
+				h.idleChan = make(chan struct{})
+				h.armIdleTimerLocked()
+			}
+			h.mu.Unlock()
+			if keep {
+				log.Printf("Hub: idle timeout expired, Auto sleep is off: keeping PTY running")
+				continue
+			}
 			log.Printf("Hub: idle timeout expired, stopping PTY")
 			h.Stop()
 			return
@@ -858,6 +887,24 @@ func (h *Hub) broadcastControl(data []byte) {
 		default:
 		}
 	}
+}
+
+// armIdleTimerLocked starts the idle timer on the current idleChan. The timer closes
+// the channel it was armed with, never a later one. Caller holds h.mu.
+func (h *Hub) armIdleTimerLocked() {
+	ch := h.idleChan
+	h.idleTimer = time.AfterFunc(idleTimeout, func() {
+		close(ch)
+	})
+}
+
+// SetKeepAwake sets the check the idle timer makes before stopping a PTY nobody is
+// watching: when it returns true (the dashboard's Auto sleep is off) the PTY keeps running.
+// REVISION: hub-v7-auto-sleep-off
+func (h *Hub) SetKeepAwake(fn func() bool) {
+	h.mu.Lock()
+	h.keepAwake = fn
+	h.mu.Unlock()
 }
 
 // SetWorkspaceRoot sets the workspace root path used to compute relative cwd paths.

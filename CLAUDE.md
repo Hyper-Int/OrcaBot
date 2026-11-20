@@ -225,6 +225,7 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Sandbox sessions use a shared `/workspace` by default
 - PTY cwd is set to the session workspace
 - Multiple PTYs per sandbox with turn-taking
+- **Auto sleep** (per dashboard, `dashboards.auto_sleep`, default on; checkbox in the dashboard menu bar, `frontend/src/components/AutoSleepToggle.tsx`). On: a terminal with no viewer is stopped after the PTY hub's 10-minute idle timeout (`sandbox/internal/pty/hub.go`), Fly suspends the idle VM, and the cron retires a VM 6h after the last terminal activity. Off (benchmark templates start that way): the sandbox session's `keepAwake` flag (sent as `auto_sleep` on every PTY create and via `POST /sessions/:id/auto-sleep` on toggle) keeps terminals running unwatched, the cron pings the VM through the Fly proxy every tick so it isn't suspended, and the VM is retired only 48h after the last terminal activity. See `controlplane/src/dashboards/auto-sleep.ts`. Templates carry `auto_sleep`; `benchmarks/bin/seed-benchmark-templates` seeds benchmark templates with it off
 
 ### Desktop, the `orcabot` CLI & Surface Switching
 - The `desktop` Tauri app bundles the whole stack locally: control plane on `workerd`, a SQLite "D1" shim, and a sandbox VM (Apple Virtualization.framework on macOS / QEMU on Linux).

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v28-agent-blocks
-console.log(`[controlplane] REVISION: controlplane-v28-agent-blocks loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v29-auto-sleep
+console.log(`[controlplane] REVISION: controlplane-v29-auto-sleep loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -637,6 +637,10 @@ export default {
         await cleanupOrphanedFlyResources(envWithBindings);
         await reapUntrackedFlyResources(envWithBindings);
         await replenishWarmPool(envWithBindings);
+        // Auto sleep off: keep those dashboards' VMs from being suspended by Fly.
+        // REVISION: auto-sleep-v1-dashboard-setting
+        const { keepAwakeDashboards } = await import('./dashboards/auto-sleep');
+        await keepAwakeDashboards(envWithBindings);
       }
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
@@ -654,19 +658,21 @@ export default {
  */
 async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> {
   try {
+    // Idle limit per dashboard: AUTO_SLEEP_ON_MAX_IDLE_HOURS (6h), or
+    // AUTO_SLEEP_OFF_MAX_IDLE_HOURS (48h) when its Auto sleep is off (long unattended
+    // benchmark runs). Until the auto_sleep column exists, everything uses 6h.
+    // REVISION: auto-sleep-v1-dashboard-setting
+    const { autoSleepColumnReady, idleBeyondLimitSql, LAST_ACTIVITY_JOIN } = await import('./dashboards/auto-sleep');
+    const idleBeyondLimit = idleBeyondLimitSql(await autoSleepColumnReady(env));
     const orphans = await env.DB.prepare(`
       SELECT ds.dashboard_id, ds.sandbox_machine_id, ds.fly_volume_id
       FROM dashboard_sandboxes ds
       LEFT JOIN dashboards d ON ds.dashboard_id = d.id
-      LEFT JOIN (
-        SELECT dashboard_id, MAX(COALESCE(stopped_at, created_at)) AS last_activity
-        FROM sessions
-        GROUP BY dashboard_id
-      ) s ON s.dashboard_id = ds.dashboard_id
+      ${LAST_ACTIVITY_JOIN}
       WHERE ds.sandbox_machine_id != ''
         AND (
           d.id IS NULL
-          OR COALESCE(s.last_activity, ds.created_at) < datetime('now', '-6 hours')
+          OR ${idleBeyondLimit}
         )
     `).all<{ dashboard_id: string; sandbox_machine_id: string; fly_volume_id: string }>();
 
@@ -1597,7 +1603,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 2 && method === 'PUT') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name?: string };
+    const data = await request.json() as { name?: string; autoSleep?: boolean };
     return dashboards.updateDashbоard(env, segments[1], auth.user!.id, data);
   }
 
