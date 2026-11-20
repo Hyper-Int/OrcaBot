@@ -500,3 +500,75 @@ func TestHubRequestCоntrolAfterControllerDisconnects(t *testing.T) {
 		}
 	}
 }
+
+// With Auto sleep off (keepAwake true) a hub nobody watches keeps its PTY past the
+// idle timeout; turning it back on stops the PTY at the next expiry.
+// REVISION: hub-v7-auto-sleep-off
+func TestHubIdleTimeoutKeepAwake(t *testing.T) {
+	old := idleTimeout
+	idleTimeout = 100 * time.Millisecond
+	defer func() { idleTimeout = old }()
+
+	p, err := New("/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create PTY: %v", err)
+	}
+	defer p.Close()
+
+	var mu sync.Mutex
+	awake := true
+	hub := NewHub(p, "")
+	hub.SetKeepAwake(func() bool { mu.Lock(); defer mu.Unlock(); return awake })
+	stopped := make(chan struct{})
+	hub.SetOnStop(func() { close(stopped) })
+	go hub.Run()
+	defer hub.Stop()
+
+	client := make(chan HubMessage, 100)
+	hub.Register(client)
+	time.Sleep(50 * time.Millisecond)
+	hub.Unregister(client) // last client gone: the idle timer starts
+
+	select {
+	case <-stopped:
+		t.Fatal("hub stopped while Auto sleep was off")
+	case <-time.After(450 * time.Millisecond): // several timeouts
+	}
+
+	mu.Lock()
+	awake = false
+	mu.Unlock()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("hub kept running after Auto sleep was turned back on")
+	}
+}
+
+// Without a keepAwake check a hub nobody watches stops at the idle timeout.
+func TestHubIdleTimeoutStops(t *testing.T) {
+	old := idleTimeout
+	idleTimeout = 100 * time.Millisecond
+	defer func() { idleTimeout = old }()
+
+	p, err := New("/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create PTY: %v", err)
+	}
+	defer p.Close()
+	hub := NewHub(p, "")
+	stopped := make(chan struct{})
+	hub.SetOnStop(func() { close(stopped) })
+	go hub.Run()
+	defer hub.Stop()
+
+	client := make(chan HubMessage, 100)
+	hub.Register(client)
+	time.Sleep(50 * time.Millisecond)
+	hub.Unregister(client)
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("hub did not stop at the idle timeout")
+	}
+}

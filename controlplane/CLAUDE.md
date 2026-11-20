@@ -468,6 +468,10 @@ Think: **Beads / Temporal-like, domain-specific**.
 
 ---
 
+## Auto sleep
+
+Per-dashboard `dashboards.auto_sleep` (default 1), toggled with `PUT /dashboards/:id {autoSleep}` (owner/editor) and inherited from `dashboard_templates.auto_sleep` by `populateFromTemplate` (export copies the dashboard's). `src/dashboards/auto-sleep.ts`: the value rides on every PTY create (`auto_sleep`) and is pushed to the live session on change (`SandboxClient.setAutoSleep`); the cron pings auto-sleep-off VMs (≤25/tick) through the Fly proxy so `autostop: suspend` never fires, and `cleanupOrphanedFlyResources` retires them after `AUTO_SLEEP_OFF_MAX_IDLE_HOURS` (48h) instead of 6h. Reads tolerate the column missing (everything sleeps until `initializeDatabase` adds it).
+
 ## Session & sandbox lifecycle
 
 - **Each dashboard gets its own dedicated VM** (one sandbox per dashboard)

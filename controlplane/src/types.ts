@@ -184,6 +184,9 @@ export interface Dashboard {
   /** Desktop: source cloud dashboard id when this was downloaded from a cloud
    *  account; null/absent for cloud-native and purely-local dashboards. */
   cloudId?: string | null;
+  /** Auto sleep (default true): false keeps the dashboard's terminals and VM running
+   *  when nobody is watching (src/dashboards/auto-sleep.ts). */
+  autoSleep?: boolean;
 }
 
 export interface DashboardItem {

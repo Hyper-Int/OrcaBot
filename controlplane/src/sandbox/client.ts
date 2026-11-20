@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v6-identifier-renames
-const sandboxClientRevision = "sandbox-client-v6-identifier-renames";
+// REVISION: sandbox-client-v7-auto-sleep
+const sandboxClientRevision = "sandbox-client-v7-auto-sleep";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -240,6 +240,10 @@ export class SandboxClient {
       // only gets one at sandbox-session create; resending it with each PTY lets a
       // VM whose token was refused (e.g. after PTY_TOKEN_SECRET rotation) recover.
       dashboardToken?: string;
+      // The dashboard's Auto sleep (off = its terminals keep running with nobody
+      // watching). Session-wide on the sandbox; sent with every PTY so a new VM or
+      // session has it before its first terminal could idle out.
+      autoSleep?: boolean;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
         provider: 'default' | 'openrouter' | 'custom';
@@ -255,7 +259,7 @@ export class SandboxClient {
     const shouldSendBody = Boolean(
       creatorId || command || options?.ptyId || options?.integrationToken ||
       options?.workingDir || options?.executionId || options?.modelSelection ||
-      options?.dashboardToken
+      options?.dashboardToken || options?.autoSleep !== undefined
     );
     const body = shouldSendBody
       ? JSON.stringify({
@@ -273,6 +277,7 @@ export class SandboxClient {
           model_selection: options?.modelSelection,
           // Same field name as POST /sessions (cpauth dashboard token)
           mcp_token: options?.dashboardToken,
+          auto_sleep: options?.autoSleep,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
@@ -293,6 +298,28 @@ export class SandboxClient {
       throw new Error(`Failed to create PTY: ${res.status} - ${errorBody}`);
     }
     return res.json();
+  }
+
+  /**
+   * Set the dashboard's Auto sleep on a live sandbox session (POST
+   * /sessions/:id/auto-sleep). Off keeps its terminals running with nobody watching.
+   * REVISION: sandbox-client-v7-auto-sleep
+   */
+  async setAutoSleep(sessionId: string, autoSleep: boolean, machineId?: string, timeoutMs = 5_000): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/auto-sleep`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ auto_sleep: autoSleep }),
+    }, timeoutMs);
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(no body)');
+      throw new Error(`Failed to set auto sleep: ${res.status} - ${errorBody}`);
+    }
   }
 
   async deletePty(sessionId: string, ptyId: string, machineId?: string): Promise<void> {

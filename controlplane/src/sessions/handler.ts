@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v33-machine-controlplane-url
-const sessionsRevision = "sessions-v33-machine-controlplane-url";
+// REVISION: sessions-v34-auto-sleep
+const sessionsRevision = "sessions-v34-auto-sleep";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -24,6 +24,7 @@ import { requireAuth, type AuthContext } from '../auth/middleware';
 import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
 import { machineControlplaneEnv, pickOwnWarmMachine, sandboxControlplaneUrl } from '../sandbox/warm-pool';
 import { detectAgentType, logServerEvent } from '../analytics/handler';
+import { getDashboardAutoSleep } from '../dashboards/auto-sleep';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
 // SECURITY: Never interpolate provider names directly into SQL - always use this map
@@ -1654,6 +1655,8 @@ async function createSessionImpl(
       tokenSigningSecret(env)
     );
     const dashboardToken = await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId);
+    // The dashboard's Auto sleep rides along with every PTY (session-wide on the VM).
+    const autoSleep = await getDashboardAutoSleep(env, dashboardId);
 
     let pty: { id: string };
     try {
@@ -1667,6 +1670,7 @@ async function createSessionImpl(
           workingDir,
           modelSelection,
           dashboardToken,
+          autoSleep,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1676,6 +1680,7 @@ async function createSessionImpl(
             integrationToken,
             modelSelection,
             dashboardToken,
+            autoSleep,
           });
         } else {
           throw wdErr;
@@ -1726,6 +1731,7 @@ async function createSessionImpl(
         integrationToken: freshIntegrationToken,
         modelSelection,
         dashboardToken: await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId),
+        autoSleep,
       });
     }
 

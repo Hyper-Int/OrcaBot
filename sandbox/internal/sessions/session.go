@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v26-no-dropped-token-fallback
+// REVISION: session-v27-auto-sleep
 
 // Package sessions manages session lifecycle.
 //
@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
@@ -114,6 +115,12 @@ type Session struct {
 	ID          string
 	DashboardID string // The dashboard this session belongs to (for MCP proxy)
 	MCPToken    string // Dashboard-scoped token for MCP proxy calls (replaces INTERNAL_API_TOKEN)
+
+	// keepAwake is true when the dashboard's Auto sleep is off: its terminals keep
+	// running with nobody watching (the PTY hubs' idle timeout doesn't stop them).
+	// Set by the control plane on every PTY create and when the user toggles it.
+	// REVISION: session-v27-auto-sleep
+	keepAwake atomic.Bool
 
 	mu        sync.RWMutex
 	ptys      map[string]*PTYInfo
@@ -638,6 +645,19 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 	return actualWorkDir, nil
 }
 
+// SetAutoSleep sets the dashboard's Auto sleep. Off keeps every terminal of this
+// session running when nobody is watching it; on (the default) lets a terminal with no
+// viewer stop after the hub's idle timeout.
+// REVISION: session-v27-auto-sleep
+func (s *Session) SetAutoSleep(on bool) {
+	if s.keepAwake.Swap(!on) != !on {
+		log.Printf("[session] REVISION: session-v27-auto-sleep: session %s auto sleep %v", s.ID, on)
+	}
+}
+
+// KeepAwake reports whether Auto sleep is off for this session.
+func (s *Session) KeepAwake() bool { return s.keepAwake.Load() }
+
 // CreatePTYOptions bundles optional parameters for PTY creation.
 type CreatePTYOptions struct {
 	CreatorID        string
@@ -968,6 +988,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 
 	hub := pty.NewHub(p, creatorID)
 	hub.SetWorkspaceRoot(s.workspace.Root())
+	hub.SetKeepAwake(s.KeepAwake)
 	hub.SetSecretValues(s.GetSecretValues())
 
 	hub.SetOnStop(func() {

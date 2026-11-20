@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v60-agent-block
-console.log(`[dashboard] REVISION: dashboard-v60-agent-block loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v61-auto-sleep
+console.log(`[dashboard] REVISION: dashboard-v61-auto-sleep loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -122,6 +122,7 @@ import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
 import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
 import { SandboxStatusLight } from "@/components/SandboxStatusLight";
+import { AutoSleepToggle } from "@/components/AutoSleepToggle";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
 import { getUserSetup, dismissAiSetup } from "@/lib/api/cloudflare/user-setup";
@@ -3944,6 +3945,13 @@ export default function DashboardPage() {
             <div className="flex items-center px-1.5 py-1 bg-[var(--background)] rounded">
               <SandboxStatusLight dashboardId={dashboardId} />
             </div>
+
+            {/* Auto sleep: untick to keep terminals running unwatched (benchmarks) */}
+            <AutoSleepToggle
+              dashboardId={dashboardId}
+              autoSleep={dashboard?.autoSleep}
+              canEdit={role === "owner" || role === "editor"}
+            />
 
             {/* Presence indicators — hidden on desktop (always a single local user) */}
             {!DESKTOP_MODE && (

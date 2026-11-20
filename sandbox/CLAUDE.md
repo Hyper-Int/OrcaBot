@@ -148,6 +148,10 @@ Fly.io (execution plane)
 - Claude Code may take control without requesting, but must yield when finished
 - Control state is **in-memory per PTY**, not persisted
 
+### Idle terminals and Auto sleep
+- A PTY hub with no connected clients stops its PTY after `IdleTimeout` (10 min, `internal/pty/hub.go`)
+- Unless the session's Auto sleep is off (`Session.SetAutoSleep(false)`, from `auto_sleep` on PTY create or `POST /sessions/:id/auto-sleep`, `cmd/server/autosleep.go`): then the hub re-arms the timer and the terminal keeps running unwatched. Checked when the timer fires, so turning it back on applies at the next expiry
+
 ### Controller disconnect behavior
 - On disconnect: control is released after **10 second grace period**
 - If original controller reconnects within 10s: control is automatically re-granted

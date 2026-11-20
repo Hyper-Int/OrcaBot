@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v50-machine-controlplane-url
+// REVISION: main-v51-auto-sleep
 
 package main
 
@@ -637,6 +637,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeletePTY)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.requireMachine(s.auth.RequireAuthFunc(s.handleWritePty)))
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionEnv)))
+	mux.HandleFunc("POST /sessions/{sessionId}/auto-sleep", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionAutoSleep)))
 	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionMetrics)))
 	mux.HandleFunc("GET /sessions/{sessionId}/control", s.requireMachine(s.auth.RequireAuthFunc(s.handleControlWebSocket)))
 	mux.HandleFunc("POST /sessions/{sessionId}/browser/start", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserStart)))
@@ -978,6 +979,7 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
 		MCPToken         string `json:"mcp_token"`         // Fresh dashboard token (replaces a dropped one)
+		AutoSleep        *bool  `json:"auto_sleep"`        // Dashboard's Auto sleep (absent = leave as is; default on)
 		ModelSelection   *struct {
 			Provider        string `json:"provider"`
 			Model           string `json:"model"`
@@ -997,6 +999,11 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	// REVISION: main-v46-egress-fail-closed
 	if req.MCPToken != "" {
 		session.SetDashboardToken(req.MCPToken)
+	}
+	// The dashboard's Auto sleep rides along too, so a new VM or session learns it
+	// before its first terminal could idle out. REVISION: main-v51-auto-sleep
+	if req.AutoSleep != nil {
+		session.SetAutoSleep(*req.AutoSleep)
 	}
 
 	// Use CreatePTYWithOptions when any optional field is present

@@ -17,6 +17,9 @@ export interface Dashboard {
   /** Desktop: the source cloud dashboard id if this was downloaded from a cloud
    *  account (drives the "downloaded" state + sync); null/absent for local ones. */
   cloudId?: string | null;
+  /** Auto sleep (default true). false: the dashboard's terminals and VM keep running
+   *  when nobody is watching (benchmark templates start that way). */
+  autoSleep?: boolean;
 }
 
 /**
