@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v4-live-game
+# REVISION: pokerbench-chatseat-v5-no-reply-is-a-miss
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
@@ -31,9 +31,9 @@ import re
 import time
 from collections.abc import Iterator
 
-from .llm import ACTIONS, Decision, ProviderError
+from .llm import ACTIONS, Decision, NoReply, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v4-live-game"
+CHATSEAT_REVISION = "pokerbench-chatseat-v5-no-reply-is-a-miss"
 
 INTRO = """\
 [PokerBench] Your owner has seated you at a poker table. This is a LIVE, TIMED game: \
@@ -182,7 +182,7 @@ class ChatSeat:
             return Decision(action, amount, reason, {"chars_out": len(text), "chars_in": len(reply)}, reply)
         if last is not None:
             raise ProviderError(f"no move in the reply: {last[:200]!r}")
-        raise ProviderError(f"no reply from {self.agent} within {self.turn_limit:.0f}s")
+        raise NoReply(f"no reply from {self.agent} within {self.turn_limit:.0f}s")
 
     def between_turns(self, view: dict) -> None:
         """llm.play hook while it isn't this seat's turn: when players have acted in a hand

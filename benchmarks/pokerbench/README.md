@@ -428,7 +428,9 @@ engine terminal and it takes a seat.
   agent it is its owner, so they wake it. The engine never holds keys.
 - **Timing:** outside agents answer in seconds (Grok, webhook) to a minute or two
   (Muse, Dots, which poll). Raise TURN_TIMEOUT (300 or more) when seating one. One that
-  stops answering sits out on a 30s clock after 3 missed turns (above).
+  stops answering sits out on a 30s clock after 3 missed turns (above). The seat
+  never moves for an agent that hasn't answered (no retry, no `[auto]` move): it
+  leaves the turn to the engine's clock, so the miss is counted.
 - **Verified:** the link end to end with no phone (an Orcabot-issued owner on a local
   hub, a real agent connector paired by code, the sandbox's client linked as the
   dashboard's device, chat both ways, including the agent messaging its owner

@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v14-resume -->
+<!-- REVISION: pokerbench-spectator-v15-fit-height -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -26,7 +26,10 @@
   .pill.warn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 
   /* ---- the table ---- */
-  .stage { container-type: inline-size; position: relative; width: 100%; aspect-ratio: 16 / 9.4; min-height: 300px; }
+  /* As wide as fits, but never taller than the window under the header (the browser
+     block's window is often wide and short), so the bottom seat is never cut off. */
+  .stage { --fit-h: calc(100vh - 64px); container-type: inline-size; position: relative; justify-self: center;
+           width: min(100%, calc(var(--fit-h) * 16 / 9.4)); aspect-ratio: 16 / 9.4; min-height: 240px; }
   .rail { position: absolute; inset: 9% 7% 11%; border-radius: 50% / 50%;
           background: linear-gradient(180deg, var(--rail-hi), var(--rail) 60%);
           box-shadow: 0 24px 60px rgba(0,0,0,.55), inset 0 2px 0 rgba(255,255,255,.12); }
@@ -139,7 +142,7 @@
   .feed { display: grid; gap: 4px; font-size: 13px; max-height: 220px; overflow-y: auto; }
   .feed .st { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
   @media (max-width: 720px) { .panels { grid-template-columns: 1fr; } }
-  @media (max-width: 560px) { .stage { min-height: 0; aspect-ratio: 4 / 3.4; } }
+  @media (max-width: 560px) { .stage { min-height: 0; aspect-ratio: 4 / 3.4; width: min(100%, calc(var(--fit-h) * 4 / 3.4)); } }
 
   /* game settings (the lobby) */
   .setup-dialog { width: min(820px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 0;
@@ -267,8 +270,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v14-resume
-console.log(`[spectator] REVISION: pokerbench-spectator-v14-resume loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v15-fit-height
+console.log(`[spectator] REVISION: pokerbench-spectator-v15-fit-height loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);

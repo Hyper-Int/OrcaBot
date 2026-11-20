@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v6-turn-deadline
+# REVISION: pokerbench-llm-v7-no-reply-is-a-miss
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v6-turn-deadline"
+LLM_REVISION = "pokerbench-llm-v7-no-reply-is-a-miss"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -83,6 +83,12 @@ class Decision:
 
 class ProviderError(Exception):
     """The model did not produce a usable decision (refusal, truncation, bad JSON)."""
+
+
+class NoReply(ProviderError):
+    """A chat seat's agent didn't answer at all within its time. play() then leaves the
+    turn to the engine's clock rather than moving for it, so the engine counts a missed
+    turn (and, after a few, gives the seat the short sit-out timeout)."""
 
 
 def _parse(text: str) -> tuple[str, int | None, str]:
@@ -300,6 +306,24 @@ def feed_decision(entry: dict) -> str:
     return f"   -> {act}  ({cost}){rejected}\n      \"{entry.get('reason', '')}\""
 
 
+def _spot(view: dict) -> tuple:
+    m = view.get("match") or {}
+    return (m.get("hand"), view.get("street"), len(view.get("actions") or []), bool(view.get("to_act")))
+
+
+def _wait_out_turn(client: Client, view: dict, turn_ends: float) -> None:
+    """Until the engine has moved past this turn (its clock ran out, or the game ended)."""
+    spot = _spot(view)
+    while time.monotonic() < turn_ends + 60:
+        time.sleep(1.0)  # (the engine's wait returns at once while it's still our turn)
+        try:
+            now = client.state()
+        except (ApiError, urllib.error.URLError, ConnectionError):
+            return  # the engine is restarting: the play loop looks again
+        if now["match"]["status"] != "running" or _spot(now) != spot:
+            return
+
+
 def play(client: Client, provider, max_retries: int = 2, log_path: Path | None = None,
          max_wait: float = 100.0, feed=None) -> dict:
     """Play until the match is over. Returns the final view. ``feed`` (e.g. print)
@@ -341,8 +365,10 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
                 system = provider.system_for(view, system)
             error = None
             acted = False
+            absent = False  # the agent never answered: the turn is the engine's clock's
             for attempt in range(max_retries + 1):
                 if time.monotonic() > turn_ends - 3:
+                    absent = absent or attempt == 0  # never got to ask: leave it to the clock
                     break  # no time left for another try
                 req_blocks = blocks + ([f"Your previous answer was rejected: {error}. Choose again."] if error else [])
                 started = time.monotonic()
@@ -352,6 +378,12 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
                          "prompt_chars": len(system) + sum(map(len, req_blocks))}
                 try:
                     d = provider.decide(system, req_blocks)
+                except NoReply as e:
+                    entry.update(error=str(e), latency_s=round(time.monotonic() - started, 3))
+                    record(entry)
+                    error = str(e)
+                    absent = True
+                    break
                 except ProviderError as e:
                     entry.update(error=str(e), latency_s=round(time.monotonic() - started, 3))
                     record(entry)
@@ -387,9 +419,12 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
                                                    "reason": d.reason})
                 acted = True
                 break
-            if not acted and time.monotonic() > turn_ends - 1:
+            if not acted and (absent or time.monotonic() > turn_ends - 1):
+                # No move from us: the engine checks or folds when its clock runs out and
+                # counts the turn as missed. Wait for that, so this turn isn't asked again.
                 record({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hand": hand,
                         "street": view.get("street"), "timed_out": True, "last_error": error})
+                _wait_out_turn(client, view, turn_ends)
             elif not acted:
                 legal = view.get("legal") or {}
                 action = "check" if "check" in legal else "fold"

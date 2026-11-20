@@ -301,3 +301,57 @@ class ChatSeatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SilentAgent(ChatSeat):
+    """An Agent block that never answers."""
+
+    def __init__(self):
+        super().__init__("agent:silent", reply_timeout=60)
+        self.posts = []
+
+    def _post(self, text):
+        self.posts.append(text)
+
+    def _replies(self, deadline):
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+        return
+        yield
+
+
+class NoReplyIsAMissTests(unittest.TestCase):
+    def test_a_silent_agent_misses_its_turns_and_sits_out_rather_than_being_covered_for(self):
+        from pokerbench import bots, llm
+        from pokerbench.server import make_server
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                port = s.getsockname()[1]
+            m = Match(MatchConfig(seats=("a", "b"), deals=40, turn_timeout=4, sit_out_after=2,
+                                  sit_out_timeout=3.5, require_join=False), Path(tmp.name) / "run")
+            srv = make_server(m, {"a": "ta", "b": "tb"}, port=port)
+            threading.Thread(target=srv.serve, daemon=True).start()
+            url = f"http://127.0.0.1:{port}"
+            agent = SilentAgent()
+            log = Path(tmp.name) / "a.calls.jsonl"
+            threading.Thread(target=llm.play, args=(cli.Client(url=url, token="ta"), agent),
+                             kwargs={"log_path": log, "max_wait": 5}, daemon=True).start()
+            threading.Thread(target=bots.play, args=(cli.Client(url=url, token="tb"), "tight"),
+                             kwargs={"max_wait": 5}, daemon=True).start()
+            until = time.monotonic() + 40
+            while time.monotonic() < until and not m.sitting_out("a"):
+                time.sleep(0.1)
+            self.assertTrue(m.sitting_out("a"), "the engine should count the silent agent's turns as missed")
+            self.assertGreaterEqual(m.missed["a"], 2)
+            entries = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertFalse([e for e in entries if "auto_action" in e], "the seat must not move for the agent")
+            self.assertTrue([e for e in entries if e.get("timed_out")])
+            self.assertEqual([e["attempt"] for e in entries if "attempt" in e], [0] * len([e for e in entries if "attempt" in e]),
+                             "no second try after no reply")
+            self.assertFalse([p for p in agent.posts if "previous answer was rejected" in p])
+            srv.shutdown()
+        finally:
+            tmp.cleanup()
