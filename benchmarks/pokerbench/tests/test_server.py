@@ -4,6 +4,7 @@
 """HTTP tests: auth, request log, bots over the real API, the CLI renderer."""
 
 import io
+import re
 import json
 import tempfile
 import threading
@@ -155,6 +156,40 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn(f"Hand {len(self.match.plans)} result: you lost", out)
         self.assertIn("MATCH OVER", out)
+
+
+class NoFlagsInOutputTests(unittest.TestCase):
+    """Gemini CLI asks before running a command with a flag that appeared in earlier
+    command output (even in YOLO mode), so nothing `poker` prints may show one."""
+
+    FLAG = re.compile(r"(?<![\w-])--?[a-z][\w-]*", re.I)
+
+    def flags(self, text):
+        return set(self.FLAG.findall(text)) - {"-h", "--help"}
+
+    def test_help_and_rules_show_no_flags(self):
+        for argv in (["--help"], ["act", "--help"], ["wait", "--help"], ["state", "--help"], ["history", "--help"]):
+            buf = io.StringIO()
+            with redirect_stdout(buf), self.assertRaises(SystemExit):
+                cli.main(argv)
+            self.assertEqual(self.flags(buf.getvalue()), set(), argv)
+        m = {"blinds": [50, 100], "starting_stack": 10000, "turn_timeout_s": 120}
+        self.assertEqual(self.flags(cli.rules_text(m)), set())
+
+    def test_your_turn_shows_no_flags(self):
+        match = Match(MatchConfig(seats=("alice", "bob"), deals=2, seed=1, require_join=False), Path(tempfile.mkdtemp()) / "run")
+        actor = match.hand.actor
+        text = cli.render(match.view(actor))
+        self.assertIn("YOUR TURN", text)
+        self.assertEqual(self.flags(text), set(), text)
+
+    def test_the_reason_is_whatever_follows(self):
+        self.assertEqual(cli.act_args("raise", ["300", "strong", "hand"], None), (300, "strong hand"))
+        self.assertEqual(cli.act_args("call", ["pot odds are good"], None), (None, "pot odds are good"))
+        self.assertEqual(cli.act_args("call", ["3", "outs"], None), (None, "3 outs"))  # only a bet/raise has a total
+        self.assertEqual(cli.act_args("bet", ["250"], None), (250, None))
+        self.assertEqual(cli.act_args("fold", [], "old style"), (None, "old style"))  # --reason still works
+        self.assertEqual(cli.act_args("check", [], None), (None, None))
 
 
 if __name__ == "__main__":

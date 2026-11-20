@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v10-end-game
+# REVISION: pokerbench-table-engine-v11-resume
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -15,6 +15,11 @@
 #   CONDITION    neutral | pressure | ambiguous | permitted | prohibited
 #   HONEYPOTS    off | hidden | obvious
 #   SEED, TURN_TIMEOUT
+#   RESUME       auto (default): if this terminal restarts during a game (it was closed, the
+#                sandbox stopped it, ...), the game carries on where it was: the hand in
+#                progress is dealt again once the players are back (up to REJOIN_GRACE
+#                seconds). off: a restart always starts a new game. End game on the table
+#                page finishes a game for good.
 #   START        manual: the table is a lobby; seats check in when they're ready and the
 #                game starts when someone presses Start on the table page, with whoever
 #                is there. auto: it starts once every seat has checked in.
@@ -28,7 +33,9 @@
 # and run $PUB/seat.sh (bin/seat).
 set -u
 START="${START:-manual}"
-REVISION=pokerbench-table-engine-v10-end-game
+RESUME="${RESUME:-auto}"
+REJOIN_GRACE="${REJOIN_GRACE:-240}"
+REVISION=pokerbench-table-engine-v11-resume
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -37,6 +44,7 @@ die() { echo "Config error: $*"; echo "Edit the settings at the top of this term
 case "$FORMAT" in tournament|cash) ;; *) die "FORMAT must be tournament or cash (got '$FORMAT')";; esac
 case "$HONEYPOTS" in off|hidden|obvious) ;; *) die "HONEYPOTS must be off, hidden or obvious";; esac
 case "$START" in manual|auto) ;; *) die "START must be manual or auto (got '$START')";; esac
+case "$RESUME" in auto|off) ;; *) die "RESUME must be auto or off (got '$RESUME')";; esac
 
 read -r -a STATIC <<<"${SEATS:-}"
 for s in ${STATIC[@]+"${STATIC[@]}"}; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
@@ -52,7 +60,11 @@ cp "$SRC/bin/seat" "$PUB/seat.sh"
 cp "$SRC/pokerbench/screen.py" "$PUB/seat_screen.py"
 "$PB" prompt --condition "$CONDITION" --players 2 --format "$FORMAT" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
 chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/seat_screen.py" "$PUB/prompt.txt"
-GAME="$(date -u +%Y%m%d-%H%M%S)"; RUN="$PRIV/runs/$GAME"
+# A game this terminal was running when it stopped carries on (RESUME=auto).
+GAME=; [ "$RESUME" = auto ] && GAME=$("$PB" resumable --runs "$PRIV/runs" 2>/dev/null)
+RESUMING=${GAME:+1}
+[ -n "$GAME" ] || GAME="$(date -u +%Y%m%d-%H%M%S)"
+RUN="$PRIV/runs/$GAME"
 rm -rf "$PRIV/tokens" "$PRIV/control.token" "$PUB/seats.json" "$PUB/engine.env"  # the host writes them
 
 # Results: the engine's own directory, plus seats/ where seats may drop their own logs
@@ -64,10 +76,15 @@ mkdir -p "$OUT/seats" && chmod 755 "$OUT" && chmod 1777 "$OUT/seats"
 ARGS=(--seats "$(join , ${STATIC[@]+"${STATIC[@]}"})" --format "$FORMAT"
       --condition "$CONDITION" --honeypots "$HONEYPOTS" --seed "$SEED" --turn-timeout "$TURN_TIMEOUT"
       --port "$PORT" --run-dir "$RUN" --tokens-dir "$PRIV/tokens" --exit-when-done
-      --start "$START" --control-token-file "$PRIV/control.token")
+      --start "$START" --control-token-file "$PRIV/control.token"
+      --resume --rejoin-grace "$REJOIN_GRACE")
 if [ "$FORMAT" = tournament ]; then ARGS+=(--hands "$HANDS" --level-hands "$LEVEL_HANDS"); else ARGS+=(--deals "$HANDS"); fi
 
-if [ "$START" = manual ]; then
+if [ -n "$RESUMING" ]; then
+  echo "== PokerBench: carrying on game $GAME, which was still running when this terminal stopped."
+  echo "   The players get up to ${REJOIN_GRACE}s to come back, then the hand in progress is dealt again."
+  echo "   (End game on the table page finishes it; RESUME=off in the settings above always starts anew.)"
+elif [ "$START" = manual ]; then
   echo "== PokerBench table. Defaults: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS"
   echo "   (change them with Settings on the table page before you press Start)"
 else
@@ -84,7 +101,8 @@ echo
 echo "Players: every terminal and Agent block linked to this engine terminal takes a seat."
 echo "Open the table (the browser block, http://localhost:$PORT/): click a seat to choose what"
 echo "plays it, Settings to set up the game, then Start. Pause, Resume and End game are there too."
-echo "After a game (or End game) restart this terminal for the next one."
+echo "After a game (or End game) restart this terminal for the next one. If it restarts during a"
+echo "game, the game carries on (RESUME=auto)."
 "$PB" host --url "http://127.0.0.1:$PORT" --control-token-file "$PRIV/control.token" --pub "$PUB" \
   --tokens-dir "$PRIV/tokens" --run-dir "$RUN" --game "$GAME" --pb "$PB" --seats "${SEATS:-}" --engine-pid $ENGINE &
 HOST=$!

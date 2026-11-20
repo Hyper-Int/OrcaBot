@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-host-v1-linked-seats
+# REVISION: pokerbench-host-v2-resume
 """The engine terminal's host (``pokerbench host``): keeps the table in step with the
 canvas while the engine runs.
 
@@ -15,7 +15,10 @@ canvas while the engine runs.
 - At the start: renders the agents' prompt for the players and the condition chosen on
   the table page, then tells the seats (POKER_STARTED=1).
 - During the game: a seat terminal that restarts gets a new PTY user; it is rebound so
-  it can play on.
+  it can play on. An Agent block's seat process that dies is started again.
+- A resumed game (the engine terminal restarted mid-game, RESUME=auto) is running from
+  the first look: the seats come from the game, and the seat terminals and Agent blocks
+  rejoin it.
 
 SEATS (optional) adds seats that aren't linked, for terminals Orcabot can't report
 links for (an older sandbox) or runs outside Orcabot.
@@ -35,7 +38,7 @@ from pathlib import Path
 
 from .players import seat_name
 
-HOST_REVISION = "pokerbench-host-v1-linked-seats"
+HOST_REVISION = "pokerbench-host-v2-resume"
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -99,6 +102,7 @@ class Host:
         self.links_ok = None  # None: not asked yet; False: this sandbox can't say
         self.bound: dict[str, int] = {}
         self.agent_procs: dict[str, subprocess.Popen] = {}
+        self.agent_starts: dict[str, list[float]] = {}  # recent start times (restart backoff)
         self.started = False
         self.shown: dict[str, str] = {}
         self.env_seats: list[str] | None = None
@@ -200,9 +204,23 @@ class Host:
     # -- Agent blocks ----------------------------------------------------------------------
     def ensure_agents(self, st: dict) -> None:
         seated = set(st.get("seats") or [])
+        running = st.get("status") == "running"
         for seat, info in self.seats.items():
-            if info["kind"] != "agent" or seat not in seated or seat in self.agent_procs:
+            if info["kind"] != "agent" or seat not in seated:
                 continue
+            proc = self.agent_procs.get(seat)
+            if proc is not None:
+                if proc.poll() is None or not running:
+                    continue
+                # It died mid-game: start it again, at most 3 times in 10 minutes.
+                recent = [t for t in self.agent_starts.get(seat, []) if time.monotonic() - t < 600]
+                if len(recent) >= 3:
+                    if self.shown.get(f"agent:{seat}") != "gave up":
+                        self.say(f"   agent seat {seat} keeps stopping (exit {proc.returncode}); not restarting it")
+                        self.shown[f"agent:{seat}"] = "gave up"
+                    continue
+                self.say(f"   agent seat {seat} stopped (exit {proc.returncode}); starting it again")
+                del self.agent_procs[seat]
             token = self.tokens_dir / f"{seat}.token"
             if not token.exists():
                 continue
@@ -218,6 +236,7 @@ class Host:
                 continue
             threading.Thread(target=self._relay, args=(seat, proc), daemon=True).start()
             self.agent_procs[seat] = proc
+            self.agent_starts.setdefault(seat, []).append(time.monotonic())
             self.say(f"   agent seat {seat}: {info['identity']}")
 
     def _relay(self, seat: str, proc: subprocess.Popen) -> None:
@@ -242,7 +261,12 @@ class Host:
         for seat in list(self.agent_procs):
             if seat not in seats:
                 self.stop_agent(seat)
-        self.say(f"== Started: {' '.join(seats)}")
+        if st.get("resumes"):
+            res = st.get("resuming") or {}
+            self.say(f"== Carrying on: {' '.join(seats)} ({st.get('hands_played', 0)} hands played"
+                     + (f"; hand {res['next_hand']} once they're back" if res.get("next_hand") else "") + ")")
+        else:
+            self.say(f"== Started: {' '.join(seats)}")
         if not settings.get("error"):
             extra = f", blinds up every {settings['level_hands']}" if fmt == "tournament" else ""
             self.say(f"   {fmt}, {settings['hands']} hands{extra}, condition {condition}, honeypots "

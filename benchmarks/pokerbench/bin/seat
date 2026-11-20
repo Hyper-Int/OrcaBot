@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v4-light
+# REVISION: pokerbench-seat-v5-rejoin
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -29,9 +29,15 @@
 # PROVIDER and EFFORT (api), STRATEGY (house) as defaults that the table page can change
 # until Start. SEAT: a seat name from the engine's SEATS, for a terminal the engine can't
 # see links for (an older sandbox).
+#
+# A seat terminal that restarts during a game (closed, or stopped by the sandbox) rejoins
+# it: a bot terminal plays on, and an agent terminal's helper gives the fresh agent the
+# prompt with a note that the game is under way. The engine terminal restarting doesn't
+# need any of this: the game carries on (RESUME=auto) and the `poker` client and the
+# bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v4-light
+REVISION=pokerbench-seat-v5-rejoin
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -157,12 +163,15 @@ waiting_on() {  # sets WAIT_Q
   rm -f "$hdr" "$body"
 }
 
-type_in() {  # file [clear-command]: give the agent the prompt, as if pasted at its prompt
+type_in() {  # file [clear-command] [extra line]: give the agent the prompt, as if pasted at its prompt
   if [ -n "${2:-}" ]; then
     own POST /input "{\"text\": \"$2\", \"enter\": true}" >/dev/null; sleep 4
   fi
-  own POST /input "$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read().rstrip("\n"), "paste": True, "enter": True}))' "$1")"
+  own POST /input "$(python3 -c 'import json,sys; t=open(sys.argv[1]).read().rstrip("\n")
+if sys.argv[2]: t += "\n\n" + sys.argv[2]
+print(json.dumps({"text": t, "paste": True, "enter": True}))' "$1" "${3:-}")"
 }
+MIDGAME="Note: this game is already under way (this terminal restarted during it). Your seat is still in it: start with \`poker wait\`."
 
 # This terminal's defaults, as JSON for the engine.
 if [ "$MODE" = helper ]; then
@@ -193,12 +202,19 @@ if [ "$MODE" = helper ]; then
     [ -n "$SEAT" ] || { sleep 3; continue; }
     export POKER_URL POKER_SEAT="$SEAT" POKER_TOKEN_FILE="$POKER_TOKENS_DIR/$SEAT.token"
     if [ "$POKER_STARTED" = 1 ]; then
-      if [ "$given" != "$POKER_GAME" ] && [ "$ready_game" = "$POKER_GAME" ]; then
+      if [ "$given" != "$POKER_GAME" ]; then
         case " $POKER_SEATS " in *" $SEAT "*)
+          note=
+          if [ "$ready_game" != "$POKER_GAME" ]; then
+            # This terminal restarted mid-game: a fresh agent, which must be signed in first.
+            P_STATUS=; eval "$(setup)" 2>/dev/null; check
+            if [ -n "$NEED" ]; then echo "$(date -u +%T) can't rejoin yet: $NEED"; sleep 5; continue; fi
+            note=$MIDGAME
+          fi
           waiting_on
           if [ -n "$WAIT_Q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$WAIT_Q\""; sleep 3; continue; fi
-          echo "$(date -u +%T) game $POKER_GAME started: giving the agent its prompt"
-          type_in "$PUB/prompt.txt" ${given_any:+"$CLEAR"} && given=$POKER_GAME && given_any=1 ;;
+          echo "$(date -u +%T) game $POKER_GAME ${note:+under way, rejoining}${note:-started}: giving the agent its prompt"
+          type_in "$PUB/prompt.txt" "${given_any:+$CLEAR}" "$note" && given=$POKER_GAME && given_any=1 ;;
         esac
       fi
       sleep 2; continue
@@ -246,7 +262,8 @@ while :; do
   fi
   export POKER_URL POKER_SEAT="$SEAT" POKER_TOKEN_FILE="$POKER_TOKENS_DIR/$SEAT.token"
   if [ "$POKER_STARTED" = 1 ]; then
-    case " $POKER_SEATS " in *" $SEAT "*) [ "$ready_game" = "$POKER_GAME" ] && break;; esac
+    # In this game: play (also after this terminal restarted mid-game: it rejoins).
+    case " $POKER_SEATS " in *" $SEAT "*) break;; esac
     say_once "Game $POKER_GAME started without this seat. Waiting for the next game..."
     sleep 3; continue
   fi

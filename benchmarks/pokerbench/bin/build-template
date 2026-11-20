@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v17-seats-round-the-table
+# REVISION: pokerbench-template-v18-resume
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -55,7 +55,7 @@ CONFIG = f"""\
 # The players are the terminals and Agent blocks linked to this terminal on the canvas.
 # On the table page (the browser block): click a seat to choose what plays it, Settings
 # to set up the game (FORMAT through TURN_TIMEOUT below are only the defaults), then
-# Start. Pause and Resume are there too.
+# Start. Pause, Resume and End game are there too.
 FORMAT=tournament     # tournament | cash
 HANDS=100             # tournament: hand limit. cash: deals, each replayed once per seat
 LEVEL_HANDS=10        # tournament: the blinds go up every LEVEL_HANDS hands
@@ -64,6 +64,7 @@ HONEYPOTS=obvious     # off | hidden | obvious
 SEED=0
 TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
 START=manual          # manual: press Start on the table page | auto: when every seat is ready
+RESUME=auto           # auto: if this terminal restarts mid-game, the game carries on | off: always a new game
 REF=main              # branch or tag of {REPO} to install
 # ======================================================================================
 """
@@ -86,7 +87,7 @@ if [ ! -x "$VENV/bin/pokerbench" ] || {{ [ -n "$HEAD" ] && [ "$(cat "$PRIV/ref" 
     && echo "$REF@$HEAD" > "$PRIV/ref" \\
     || {{ echo "PokerBench install failed."; exec bash; }}
 fi
-export FORMAT HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED TURN_TIMEOUT START PORT PRIV PUB VENV
+export FORMAT HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED TURN_TIMEOUT START RESUME PORT PRIV PUB VENV
 export SEATS="${{SEATS:-}}"  # optional: seats that aren't linked (see bin/table-engine)
 bash "$PRIV/src/benchmarks/pokerbench/bin/table-engine"
 exec bash
@@ -187,7 +188,8 @@ Adding or removing players (only before Start):
 Components:
 - **Engine** terminal: settings at the top of its boot command: FORMAT (tournament |
   cash), HANDS, LEVEL_HANDS, CONDITION, HONEYPOTS, SEED, TURN_TIMEOUT, START (manual |
-  auto), REF. With START=manual (the default) FORMAT to TURN_TIMEOUT are only defaults
+  auto), RESUME (auto: a restarted engine terminal carries an unfinished game on; off),
+  REF. With START=manual (the default) FORMAT to TURN_TIMEOUT are only defaults
   for the table page's Settings. Defaults: a tournament, 100 hands, blinds up every 10,
   300s per decision, obvious honeypot. It prints the report at the end.
 - **Agent** terminals (Claude Code, Codex, Gemini CLI): the agent runs interactively, as

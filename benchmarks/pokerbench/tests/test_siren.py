@@ -35,6 +35,7 @@ class ParseReplyTests(unittest.TestCase):
 def provider():
     p = SirenProvider.__new__(SirenProvider)  # no siren-stdio process
     p.introduced, p.last_hand_sent, p.events = False, 0, queue.Queue()
+    p.turn, p.turn_limit, p.turn_deadline, p.view, p.updated = 1, 150.0, None, {}, None
     return p
 
 
@@ -54,7 +55,8 @@ class MessageTests(unittest.TestCase):
         # Same hand, next street: nothing new has finished.
         third = p.message("INTRO", ["Hand 1 (level 1)\n...", "Hand 2 (level 1)\n...", "CURRENT HAND\nHand 3/6 flop"])
         self.assertNotIn("Since your last turn", third)
-        self.assertTrue(third.startswith("CURRENT HAND"))
+        self.assertTrue(third.startswith("[PokerBench] Turn 1: your move"))
+        self.assertIn("CURRENT HAND", third)
 
     def test_a_rejection_is_passed_on(self):
         p = provider()

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v5-provider-hooks
+# REVISION: pokerbench-llm-v6-turn-deadline
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -32,12 +32,13 @@ import json
 import logging
 import os
 import time
+import urllib.error
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v5-provider-hooks"
+LLM_REVISION = "pokerbench-llm-v6-turn-deadline"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -285,6 +286,8 @@ def feed_decision(entry: dict) -> str:
     """One line on what the model did, its reason, and what it cost."""
     if "auto_action" in entry:
         return f"   -> {entry['auto_action']} [auto: no valid decision]  {entry.get('last_error') or ''}"[:300]
+    if entry.get("timed_out"):
+        return f"   -> timed out: the engine checked or folded  {entry.get('last_error') or ''}"[:300]
     if entry.get("error"):
         return f"   !  try {entry['attempt'] + 1} failed ({entry.get('latency_s')}s): {entry['error']}"[:300]
     act = entry["action"] + (f" {entry['amount']}" if entry.get("amount") and entry["action"] in ("bet", "raise") else "")
@@ -311,14 +314,26 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
             logf.flush()
         say(feed_decision(entry))
 
+    # Chat seats keep their agent posted between turns (provider.between_turns).
+    keep_posted = hasattr(provider, "between_turns")
     try:
         while True:
-            view = client.wait_for_turn(max_wait)
+            view = client.wait_for_turn(max_wait, until_change=keep_posted)
             if view["match"]["status"] == "finished":
                 return view
             if not view.get("to_act"):
+                if keep_posted:
+                    try:
+                        provider.between_turns(view)
+                    except Exception as e:  # noqa: BLE001 -- an update is a courtesy
+                        say(f"(couldn't post an update: {e})")
                 continue
             hand = view["match"]["hand"]
+            # The engine's clock for this turn: past it the engine has checked or folded for
+            # us, so neither another try nor our own fallback move can count.
+            turn_ends = time.monotonic() + float(view.get("seconds_left") or 1e9)
+            if hasattr(provider, "turn_deadline"):
+                provider.turn_deadline = turn_ends - 2
             say(feed_situation(view))
             history = client.history(200)["hands"]
             system, blocks = build_request(view, history, notes)
@@ -327,6 +342,8 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
             error = None
             acted = False
             for attempt in range(max_retries + 1):
+                if time.monotonic() > turn_ends - 3:
+                    break  # no time left for another try
                 req_blocks = blocks + ([f"Your previous answer was rejected: {error}. Choose again."] if error else [])
                 started = time.monotonic()
                 entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hand": hand,
@@ -350,6 +367,13 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
                              action=d.action, amount=d.amount, reason=d.reason)
                 try:
                     client.act(d.action, d.amount, d.reason)
+                except (urllib.error.URLError, ConnectionError) as e:
+                    # The engine is restarting: the move wasn't made, and the hand will be dealt
+                    # again. Look again rather than replay this decision on it.
+                    entry["rejected"] = f"engine unreachable: {e}"
+                    record(entry)
+                    acted = True
+                    break
                 except ApiError as e:
                     entry["rejected"] = e.body.get("error")
                     record(entry)
@@ -363,12 +387,15 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
                                                    "reason": d.reason})
                 acted = True
                 break
-            if not acted:
+            if not acted and time.monotonic() > turn_ends - 1:
+                record({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hand": hand,
+                        "street": view.get("street"), "timed_out": True, "last_error": error})
+            elif not acted:
                 legal = view.get("legal") or {}
                 action = "check" if "check" in legal else "fold"
                 try:
                     client.act(action, None, f"[auto] no valid model decision after {max_retries + 1} tries")
-                except ApiError:
+                except (ApiError, urllib.error.URLError, ConnectionError):
                     pass
                 record({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hand": hand,
                         "street": view.get("street"), "auto_action": action, "last_error": error})

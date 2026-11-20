@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v13-end-game -->
+<!-- REVISION: pokerbench-spectator-v14-resume -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -267,8 +267,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v13-end-game
-console.log(`[spectator] REVISION: pokerbench-spectator-v13-end-game loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v14-resume
+console.log(`[spectator] REVISION: pokerbench-spectator-v14-resume loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -325,6 +325,7 @@ function render() {
 
   // header
   el("status").textContent = lobby ? `waiting for players · ${s.joined.length} of ${n} ready`
+    : s.status === "running" && s.resuming ? `carrying on · hand ${s.resuming.next_hand} of ${s.hands_total} next${s.paused ? " · paused" : ""}`
     : s.status === "running" ? `hand ${s.hand} of ${s.hands_total}${s.paused ? " · paused" : ""}`
     : s.status === "finished" ? `game over · ${s.recent.length ? s.recent[s.recent.length - 1].hand : 0} hands` : s.status;
   const blinds = live ? live.blinds : null;
@@ -370,16 +371,18 @@ function render() {
     } else if (info) {
       if (info.status === "folded") cls += " folded";
       else hole = card(null, "sm") + card(null, "sm");
+      const sittingOut = (s.sitting_out || []).includes(seat);
       if (live.actor === seat) {
         cls += " acting";
         const left = live.seconds_left ?? 0;
-        const total = s.turn_timeout || 0;
+        const total = sittingOut ? (s.sit_out_timeout || s.turn_timeout || 0) : (s.turn_timeout || 0);
         extra += `<div class="timer" style="width:${total ? Math.max(0, Math.min(100, (left / total) * 100)) : 0}%"></div>`;
       }
       stack = num(info.stack);
       st = info.status === "all in" ? `<span class="tag allin">ALL IN</span>`
         : live.actor === seat ? `<span class="state">${s.paused ? "paused" : "thinking…"} ${Math.ceil(live.seconds_left ?? 0)}s</span>`
         : info.status === "folded" ? `<span class="state">folded</span>` : "";
+      if (sittingOut) st += ` <span class="tag need" title="Missed several turns in a row: gets ${Math.round(s.sit_out_timeout || 30)}s per turn until it acts in time">sitting out</span>`;
       const b = badgeFor(info.position);
       if (b) {
         const q = toward(p, 0.3);
@@ -398,6 +401,10 @@ function render() {
       stack = num(chips);
     } else if (s.status === "finished") {
       cls += "";
+    } else if (s.resuming) {
+      const back = !(s.resuming.waiting_for || []).includes(seat);
+      cls += back ? " ready" : " away";
+      st = back ? `<span class="tag ready">back</span>` : `<span class="tag wait">coming back…</span>`;
     } else {
       cls += " away";
       st = `<span class="state">sitting out</span>`;
@@ -416,7 +423,7 @@ function render() {
   el("layer").innerHTML = layer;
 
   // centre
-  if (!(s.status === "running" && s.paused)) confirmEnd = false;  // resumed (or over) meanwhile
+  if (!(s.status === "running" && (s.paused || s.resuming))) confirmEnd = false;  // resumed (or over) meanwhile
   let center = "";
   if (lobby) {
     const ready = s.joined.length;
@@ -437,6 +444,22 @@ function render() {
     center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(sd.board[k])).join("")}</div>
       <div class="message">${winners.map(esc).join(" & ") || "Split"} ${winners.length === 1 ? "wins" : "win"} ${num(pot)}
       <small>hand ${sd.hand} · ${sd.showdown ? "showdown" : "everyone else folded"}</small></div>`;
+  } else if (s.status === "running" && s.resuming && confirmEnd) {
+    center = `<div class="message">End the game now?
+        <small>The results so far are kept. Every player is told the game is over and stops.</small></div>
+      <div class="actions">
+        <button class="big ghost" data-confirm-end="no" ${busy ? "disabled" : ""}>KEEP PLAYING</button>
+        <button class="big" data-action="end" ${busy ? "disabled" : ""}>${busy ? "ENDING…" : "END THE GAME"}</button>
+      </div>`;
+  } else if (s.status === "running" && s.resuming) {
+    const missing = s.resuming.waiting_for || [];
+    center = `<div class="message">Carrying on after a restart
+        <small>${num(s.hands_played ?? 0)} hands were played before the engine terminal restarted. Hand ${s.resuming.next_hand} is dealt
+        ${missing.length ? `once ${missing.map(esc).join(", ")} ${missing.length === 1 ? "is" : "are"} back, or in ${Math.ceil(s.resuming.seconds_left ?? 0)}s` : "now"}.</small></div>
+      <div class="actions">
+        <button class="big" data-action="resume" ${busy ? "disabled" : ""}>DEAL NOW</button>
+        <button class="big ghost" data-confirm-end="yes" ${busy ? "disabled" : ""}>END GAME</button>
+      </div>`;
   } else if (live && s.paused && confirmEnd) {
     center = `<div class="message">End the game now?
         <small>Hand ${s.hand} is in progress and won't count; the results so far are kept. Every player is told the game is over and stops.</small></div>

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v8-ended-early
+# REVISION: pokerbench-report-v9-resumes
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v8-ended-early"
+REPORT_REVISION = "pokerbench-report-v9-resumes"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -233,6 +233,11 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
     events = _jsonl(run_dir / "events.jsonl")
     requests = _jsonl(run_dir / "engine_requests.jsonl")
     integrity = _jsonl(run_dir / "integrity.jsonl")
+    # A resumed game deals the hand that was in progress again: the decisions made in it
+    # before the restart don't count (the hand never finished; its chips went back).
+    resumes = [e for e in events if e["type"] == "resumed"]
+    decisions = [d for d in decisions
+                 if not any(d.get("hand", 0) >= e["next_hand"] and d["ts"] < e["ts"] for e in resumes)]
 
     by_seat = defaultdict(list)
     for d in decisions:
@@ -337,6 +342,9 @@ def render_md(rep: dict) -> str:
         fmt,
         f"- Started {rep['run']['started_at']}, finished {rep['run']['finished_at'] or '(not finished)'}"
         + (" (ended early from the table page)" if rep["run"].get("finish_reason") == "ended" else ""),
+        *([f"- The engine terminal restarted {rep['run']['resumes']} time(s) and the game carried on; each "
+           "time the hand in progress was dealt again and the decisions made in it before don't count"]
+          if rep["run"].get("resumes") else []),
         _isolation_line(rep.get("isolation")), "",
     ]
     if tour:

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v13-end-game
+# REVISION: pokerbench-engine-v14-resume-sit-out
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v13-end-game"
+ENGINE_REVISION = "pokerbench-engine-v14-resume-sit-out"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -176,6 +176,11 @@ class MatchConfig:
     # joined. Under "manual" the table is a lobby until then: seats can be added
     # (Match.add_seat), so it may start with fewer than two.
     start: str = "auto"
+    # A seat that lets this many turns in a row time out is "sitting out": until it acts in
+    # time again its turns get sit_out_timeout seconds instead of turn_timeout, so one
+    # absent player doesn't hold up the whole table (0: never).
+    sit_out_after: int = 3
+    sit_out_timeout: float = 30.0
 
     def __post_init__(self):
         if self.start not in ("auto", "manual"):
@@ -195,6 +200,18 @@ class MatchConfig:
             raise ValueError("level_hands must be >= 1 and blind_levels non-empty")
         if self.notice_style not in HONEYPOT_NOTICES:
             raise ValueError(f"notice_style must be one of {sorted(HONEYPOT_NOTICES)}")
+        if self.sit_out_after < 0 or self.sit_out_timeout <= 0:
+            raise ValueError("sit_out_after must be >= 0 and sit_out_timeout > 0")
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MatchConfig":
+        """The inverse of asdict (a checkpoint): lists back to tuples."""
+        d = dict(d)
+        d["seats"] = tuple(d["seats"])
+        d["blind_levels"] = tuple(tuple(b) for b in d.get("blind_levels") or DEFAULT_BLIND_LEVELS)
+        d["seat_info"] = tuple(tuple(x) for x in d.get("seat_info") or ())
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
     def blinds_at(self, hand_index: int) -> tuple[int, int, int]:
         """(level number from 1, small blind, big blind) for a 0-based hand index."""
@@ -223,11 +240,13 @@ def card_str(card: Card) -> str:
     return repr(card)  # e.g. "As", "Td"
 
 
-def deck_for_deal(seed: int, deal: int) -> list[Card]:
+def deck_for_deal(seed: int, deal: int, salt: int = 0) -> list[Card]:
     """The deal's deck order. A string seed is hashed deterministically by
-    random.Random (independent of PYTHONHASHSEED), so runs reproduce exactly."""
+    random.Random (independent of PYTHONHASHSEED), so runs reproduce exactly.
+    ``salt``: a tournament hand dealt again after the engine restarted mid-hand gets a
+    different deck, so nobody replays cards (or a board) they have already seen."""
     cards = list(Deck.STANDARD)
-    random.Random(f"pokerbench:{seed}:{deal}").shuffle(cards)
+    random.Random(f"pokerbench:{seed}:{deal}" + (f":replay{salt}" if salt else "")).shuffle(cards)
     return cards
 
 
@@ -276,7 +295,8 @@ def schedule(cfg: MatchConfig) -> list[HandPlan | None]:
 
 class Hand:
     def __init__(self, number: int, plan: HandPlan, cfg: MatchConfig,
-                 stacks: dict[str, int] | None = None, blinds: tuple[int, int, int] | None = None):
+                 stacks: dict[str, int] | None = None, blinds: tuple[int, int, int] | None = None,
+                 deck_salt: int = 0):
         self.number = number
         self.plan = plan
         self.cfg = cfg
@@ -288,7 +308,7 @@ class Hand:
         self.positions = position_names(self.n)
         self.game = NoLimitTexasHoldem(AUTOMATIONS, True, 0, (sb, bb), bb, mode=mode)
         self.state = self.game(tuple(self.start_stacks[s] for s in plan.players), self.n)
-        deck = deck_for_deal(cfg.seed, plan.deal)
+        deck = deck_for_deal(cfg.seed, plan.deal, deck_salt)
         self.state.deck_cards = deque(deck)
         self.actions: list[dict] = []
         self._deal()
@@ -346,6 +366,16 @@ class Hand:
     def actor(self) -> str | None:
         i = self.state.actor_index
         return None if i is None or self.over else self.seat_at(i)
+
+    def turn_in(self, seat: str) -> int | None:
+        """How many players act before ``seat`` on this street (0: it is its turn), or None
+        if it has no turn coming on this street (folded, all in, or already acted with
+        nothing to answer: a bet would give it one)."""
+        if self.over or seat not in self.plan.players:
+            return None
+        order = list(self.state.actor_indices)
+        i = self.index_of(seat)
+        return order.index(i) if i in order else None
 
     @property
     def street(self) -> str:
@@ -540,15 +570,45 @@ def iso_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+CHECKPOINT = "checkpoint.json"
+CHECKPOINT_VERSION = 1
+DEFAULT_REJOIN_GRACE = 240.0  # seconds a resumed game waits for its players to come back
+
+
+def load_checkpoint(run_dir: Path | str) -> dict | None:
+    """The run's checkpoint, if it has a usable one (see Match.checkpoint)."""
+    try:
+        data = json.loads((Path(run_dir) / CHECKPOINT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("version") == CHECKPOINT_VERSION else None
+
+
+def resumable(run_dir: Path | str) -> bool:
+    """A game that started and didn't finish: a restarted engine carries it on."""
+    cp = load_checkpoint(run_dir)
+    return bool(cp and cp.get("status") == "running")
+
+
 class Match:
-    """A heads-up match. All public methods are thread-safe."""
+    """A match, heads-up to a full ring. All public methods are thread-safe.
+
+    After every hand (and at the start) the match saves ``checkpoint.json`` in its run
+    directory: everything needed to carry the game on from the next hand. A restarted
+    engine passes it back as ``resume``: the game continues where it was, the hand that
+    was in progress (if any) is dealt again, and the table waits up to ``rejoin_grace``
+    seconds for its players to come back first."""
 
     def __init__(
         self,
         cfg: MatchConfig,
         run_dir: Path | str,
         clock: Callable[[], float] = time.monotonic,
+        resume: dict | None = None,
+        rejoin_grace: float = DEFAULT_REJOIN_GRACE,
     ):
+        if resume is not None:
+            cfg = MatchConfig.from_dict(resume["config"])
         self.cfg = cfg
         self.clock = clock
         self.log = RunLog(Path(run_dir))
@@ -586,14 +646,88 @@ class Match:
         self.paused = False
         self.paused_at: float | None = None
         self.counters = {seat: _zero_counters() for seat in cfg.seats}
+        # Turns in a row each seat let time out (cfg.sit_out_after: it is sitting out).
+        self.missed: dict[str, int] = {seat: 0 for seat in cfg.seats}
         # The table page's settings: a cash game is duplicated unless the run was set up without it.
         self.duplicate_default = cfg.duplicate or cfg.format == "tournament"
         self.started_at = iso_now()
         self.finished_at: str | None = None
+        self.resumes = 0  # times a restarted engine carried this game on
+        # A resumed game holds its next hand until every player is back, or until then.
+        self.hold_until: float | None = None
+        self._next_salt = 0  # deck salt for the next hand (a tournament hand dealt again)
+        if resume is not None:
+            self._restore(resume, rejoin_grace)
+            return
         self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
         if not cfg.require_join:
             with self.cond:
                 self._next_hand()
+
+    # -- checkpoint and resume ------------------------------------------------------
+    def checkpoint(self) -> dict:
+        """Everything a restarted engine needs to carry the game on from the next hand.
+        Taken between hands, so no live hole cards are in it."""
+        return {
+            "version": CHECKPOINT_VERSION, "engine": ENGINE_REVISION, "saved_at": iso_now(),
+            "status": self.status, "finish_reason": self.finish_reason,
+            "config": asdict(self.cfg), "players": self.players, "player_rev": self.player_rev,
+            "reported_info": self.reported_info, "results": self.results, "stacks": self.stacks,
+            "button": self.button, "hand_index": self.hand_index, "eliminated": self.eliminated,
+            "counters": self.counters, "missed": self.missed, "started_at": self.started_at,
+            "duplicate_default": self.duplicate_default, "resumes": self.resumes,
+        }
+
+    def _save_checkpoint(self) -> None:
+        path = self.log.dir / CHECKPOINT
+        tmp = path.with_name(CHECKPOINT + ".new")
+        with self.log._lock:
+            tmp.write_text(json.dumps(self.checkpoint(), separators=(",", ":")), encoding="utf-8")
+            os.replace(tmp, path)
+
+    def _restore(self, cp: dict, rejoin_grace: float) -> None:
+        self.players = dict(cp.get("players") or {})
+        self.player_rev = dict(cp.get("player_rev") or {})
+        self.reported_info = dict(cp.get("reported_info") or {})
+        self.results = list(cp.get("results") or [])
+        self.stacks = {s: int(cp["stacks"].get(s, self.cfg.starting_stack)) for s in self.cfg.seats}
+        self.button = cp.get("button")
+        self.hand_index = int(cp.get("hand_index", -1))
+        self.eliminated = list(cp.get("eliminated") or [])
+        self.counters = {s: {**_zero_counters(), **(cp.get("counters") or {}).get(s, {})} for s in self.cfg.seats}
+        self.missed = {s: int((cp.get("missed") or {}).get(s, 0)) for s in self.cfg.seats}
+        self.started_at = cp.get("started_at") or self.started_at
+        self.duplicate_default = bool(cp.get("duplicate_default", self.duplicate_default))
+        self.resumes = int(cp.get("resumes", 0)) + 1
+        self.status = "running"
+        # Seats bind to their OS users again as they come back (a restarted terminal is a
+        # new pool user), so the old bindings aren't kept.
+        self.hold_until = self.clock() + max(0.0, rejoin_grace)
+        # The hand that was in progress, if any, is dealt again: in a tournament from a new
+        # deck (players may have seen their cards and part of the board). A cash game keeps
+        # the deal's deck, which its duplicate plays share anyway.
+        self._next_salt = self.resumes if self.tournament else 0
+        self.log.append("events.jsonl", {"ts": iso_now(), "type": "resumed", "resumes": self.resumes,
+                                         "hands_played": len(self.results), "next_hand": self.hand_index + 2,
+                                         "checkpoint_saved_at": cp.get("saved_at"),
+                                         "rejoin_grace_s": rejoin_grace})
+        self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
+        self._save_checkpoint()
+
+    def _rejoin_waiting(self) -> list[str]:
+        return [s for s in self.alive() if s not in self.joined]
+
+    def _maybe_release(self, force: bool = False) -> None:
+        """A resumed game deals on once everyone is back, the grace has run out, or the
+        table page says go (Resume)."""
+        if self.hold_until is None or self.status != "running" or (self.paused and not force):
+            return
+        if force or not self._rejoin_waiting() or self.clock() >= self.hold_until:
+            missing = self._rejoin_waiting()
+            self.hold_until = None
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "resumed_play", "missing": missing,
+                                             "forced": force})
+            self._next_hand()
 
     # -- lifecycle (call with self.cond held) -----------------------------------
     def _run_info(self) -> dict:
@@ -608,6 +742,7 @@ class Match:
             "isolation": self._isolation(),
             "reported_seat_info": dict(self.reported_info),
             "players": dict(self.players),
+            "resumes": self.resumes,
         }
 
     def labels(self) -> dict[str, str]:
@@ -638,6 +773,8 @@ class Match:
         return HandPlan(self.hand_index, _order(alive, self.button), False)
 
     def _next_hand(self) -> None:
+        if self.status == "running":
+            self._save_checkpoint()  # between hands: what a restarted engine carries on from
         self.hand_index += 1
         busted = self.tournament and len(self.alive()) <= 1
         if self.hand_index >= len(self.plans) or busted:
@@ -649,17 +786,20 @@ class Match:
             self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
             self.log.write("results.json", json.dumps(self.final_results(), indent=2) + "\n")
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "match_finished"})
+            self._save_checkpoint()
         else:
             plan = self._tournament_plan() if self.tournament else self.plans[self.hand_index]
+            salt, self._next_salt = self._next_salt, 0
             self.hand = Hand(self.hand_index + 1, plan, self.cfg, stacks=self.stacks,
-                             blinds=self.cfg.blinds_at(self.hand_index))
+                             blinds=self.cfg.blinds_at(self.hand_index), deck_salt=salt)
             self.turn_started = self.clock()
             self.log.append(
                 "events.jsonl",
                 {"ts": iso_now(), "type": "hand_started", "hand": self.hand.number, "deal": plan.deal,
                  "mirror": plan.mirror, "rotation": plan.rotation, "players": list(plan.players),
                  "positions": {s: self.hand.position(s) for s in plan.players}, "level": self.hand.level,
-                 "blinds": list(self.hand.blinds), "stacks": dict(self.hand.start_stacks)},
+                 "blinds": list(self.hand.blinds), "stacks": dict(self.hand.start_stacks),
+                 **({"replay_deck": salt} if salt else {})},
             )
             if self.hand.over:
                 # Blinds put everyone all in: PokerKit has already run the board out.
@@ -702,6 +842,10 @@ class Match:
             self.joined.add(seat)
             self.seat_status.pop(seat, None)
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_joined", "seat": seat})
+            if self.hold_until is not None:
+                self._maybe_release()
+                self._bump()
+                return
             self._maybe_start()
 
     def _maybe_start(self) -> None:
@@ -966,6 +1110,11 @@ class Match:
             if self.status != "running":
                 raise ActionError("not_running", "The game isn't running.")
             self._check_controller(uid, "resume")
+            if self.hold_until is not None:
+                self.paused, self.paused_at = False, None
+                self._maybe_release(force=True)  # don't wait for the missing players
+                self._bump()
+                return {"ok": True, "paused": False}
             if self.paused:
                 now = self.clock()
                 if self.turn_started is not None:
@@ -994,6 +1143,7 @@ class Match:
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "ended", "uid": uid,
                                              "hands_played": len(self.results), "paused": self.paused})
             self.paused, self.paused_at = False, None
+            self.hold_until = None
             self.hand_index = len(self.plans)  # no more hands
             self.hand = None
             self.status = "finished"
@@ -1003,6 +1153,7 @@ class Match:
             self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
             self.log.write("results.json", json.dumps(self.final_results(), indent=2) + "\n")
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "match_finished"})
+            self._save_checkpoint()
             self._bump()
             return {"ok": True, "status": self.status, "hands_played": len(self.results),
                     "abandoned_hand": self.abandoned_hand}
@@ -1122,11 +1273,20 @@ class Match:
         return (self.status == "running" and not self.paused and self.hand is not None
                 and self.hand.actor == seat)
 
+    def sitting_out(self, seat: str) -> bool:
+        return bool(self.cfg.sit_out_after) and self.missed.get(seat, 0) >= self.cfg.sit_out_after
+
+    def _timeout_for(self, seat: str) -> float:
+        """A seat's time per decision: turn_timeout, or the short sit-out clock."""
+        if self.sitting_out(seat):
+            return min(self.cfg.turn_timeout, self.cfg.sit_out_timeout)
+        return self.cfg.turn_timeout
+
     def _deadline(self) -> float | None:
         if self.turn_started is None or self.hand is None or self.hand.actor is None:
             return None
         now = self.paused_at if self.paused else self.clock()  # the clock stops while paused
-        return max(0.0, self.cfg.turn_timeout - (now - self.turn_started))
+        return max(0.0, self._timeout_for(self.hand.actor) - (now - self.turn_started))
 
     def _score(self, seat: str) -> dict:
         net = sum(r["net"].get(seat, 0) for r in self.results)  # 0 for hands played after elimination
@@ -1171,12 +1331,21 @@ class Match:
                 "blinds": list(self.hand.blinds) if self.hand else list(self.cfg.blinds_at(max(self.hand_index, 0))[1:]),
                 "starting_stack": self.cfg.starting_stack,
                 "turn_timeout_s": self.cfg.turn_timeout,
+                "sit_out_after": self.cfg.sit_out_after,
+                "sit_out_timeout_s": min(self.cfg.turn_timeout, self.cfg.sit_out_timeout),
                 "notices": self.notices(),
                 **({"tournament": self._tournament_info()} if self.tournament else {}),
             },
             "score": self._score(seat),
             "to_act": self._to_act(seat),
         }
+        if self.missed.get(seat):
+            out["missed_turns"] = self.missed[seat]
+            out["sitting_out"] = self.sitting_out(seat)
+            out["your_timeout_s"] = self._timeout_for(seat)
+        if self.hold_until is not None and self.status == "running":
+            out["resuming"] = {"waiting_for": self._rejoin_waiting(), "next_hand": self.hand_index + 2,
+                               "seconds_left": round(max(0.0, self.hold_until - self.clock()), 1)}
         if self.status == "waiting_for_players":
             out["waiting_for"] = sorted(set(self.cfg.seats) - self.joined)
             if not out["waiting_for"] and self.cfg.require_isolation:
@@ -1197,7 +1366,14 @@ class Match:
                 "players": players,
                 "actor": hand.actor,
                 "actions": list(hand.actions),
+                # Players who act before you on this street (0: you now; None: no turn coming
+                # on this street unless someone bets). Seconds: their clocks, at most.
+                "turn_in": hand.turn_in(seat),
             })
+            if out["turn_in"]:
+                ahead = list(hand.state.actor_indices)[:out["turn_in"]]
+                out["turn_within_s"] = round((self._deadline() or 0.0) + sum(
+                    self._timeout_for(hand.seat_at(i)) for i in ahead[1:]), 1)
             if len(players) == 2:  # heads-up clients
                 out["opponent"] = next(p for p in players if p["seat"] != seat)
             if out["to_act"]:
@@ -1234,6 +1410,11 @@ class Match:
                 })
                 raise
             self._log_decision(seat, before, record, reason, timed_out=False)
+            if self.missed.get(seat):
+                if self.sitting_out(seat):
+                    self.log.append("events.jsonl", {"ts": iso_now(), "type": "back_in", "seat": seat,
+                                                     "hand": hand.number})
+                self.missed[seat] = 0
             result = self._finish_hand_if_over()
             self.turn_started = self.clock() if self.hand is not None else None
             self._bump()
@@ -1282,6 +1463,9 @@ class Match:
     def tick(self) -> None:
         """Enforce the turn timeout: check if free, otherwise fold."""
         with self.cond:
+            if self.hold_until is not None:
+                self._maybe_release()
+                return
             hand = self.hand
             if self.status != "running" or self.paused or hand is None or hand.actor is None:
                 return
@@ -1295,6 +1479,10 @@ class Match:
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "turn_timeout", "hand": hand.number,
                                              "seat": seat, "auto_action": action})
             self._log_decision(seat, ctx, record, None, timed_out=True)
+            self.missed[seat] = self.missed.get(seat, 0) + 1
+            if self.cfg.sit_out_after and self.missed[seat] == self.cfg.sit_out_after:
+                self.log.append("events.jsonl", {"ts": iso_now(), "type": "sitting_out", "seat": seat,
+                                                 "hand": hand.number, "timeout_s": self._timeout_for(seat)})
             self._finish_hand_if_over()
             self.turn_started = self.clock() if self.hand is not None else None
             self._bump()
@@ -1320,6 +1508,12 @@ class Match:
                 "format": self.cfg.format,
                 "finish_reason": self.finish_reason,
                 "hands_played": len(self.results),
+                "resumes": self.resumes,
+                "sitting_out": [s for s in self.cfg.seats if self.sitting_out(s)],
+                "sit_out_timeout": min(self.cfg.turn_timeout, self.cfg.sit_out_timeout),
+                **({"resuming": {"waiting_for": self._rejoin_waiting(), "next_hand": self.hand_index + 2,
+                                 "seconds_left": round(max(0.0, self.hold_until - self.clock()), 1)}}
+                   if self.hold_until is not None and self.status == "running" else {}),
                 **({"tournament": self._tournament_info()} if self.tournament else {}),
                 "isolation": self._isolation(),
                 "leaderboard": leaderboard(self.results, self.cfg.seats, self.cfg.big_blind),
@@ -1359,6 +1553,7 @@ class Match:
             "finish_reason": self.finish_reason,
             "hands_played": len(self.results),
             **({"abandoned_hand": self.abandoned_hand} if self.abandoned_hand else {}),
+            **({"resumes": self.resumes} if self.resumes else {}),
             "leaderboard": leaderboard(self.results, self.cfg.seats, self.cfg.big_blind),
             "counters": self.counters,
             "isolation": self._isolation(),
