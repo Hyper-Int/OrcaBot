@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v18-resume
+# REVISION: pokerbench-template-v19-gemini-auto-approve
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -29,7 +29,11 @@ PORT = 8765
 # and --include-directories /tmp/pokerbench: Gemini CLI asks before every command naming
 # a path outside its workspace that it has seen in earlier output, YOLO or not, and
 # withholds "allow always" for them, so `poker` (/tmp/pokerbench/...) needed approving
-# over and over.
+# over and over. That check (Gemini's "Untrusted Command Flags" prompt) still fires for
+# anything else it saw in output, and a seat sat hours waiting on it, so the Gemini
+# terminal also has Auto-approve flagged commands on: the sandbox answers that prompt
+# with "Allow once" (sandbox/internal/geminiapprove).
+TERMINAL_SETTINGS = {"Gemini CLI": {"autoApproveFlagged": True}}
 AGENT_TERMINALS = (
     ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
     ("Codex", "openai", 'exec codex ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
@@ -231,7 +235,8 @@ def terminal(pid, name, boot, x, y, w, h, agentic):
     return {
         "placeholderId": pid,
         "type": "terminal",
-        "content": json.dumps({"name": name, "agentic": agentic, "bootCommand": boot,
+        "content": json.dumps({"name": name, "agentic": agentic, **TERMINAL_SETTINGS.get(name, {}),
+                               "bootCommand": boot,
                                "subagentIds": [], "skillIds": [], "mcpToolIds": []}),
         "position": {"x": x, "y": y},
         "size": {"width": w, "height": h},

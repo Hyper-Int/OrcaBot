@@ -59,7 +59,7 @@
   {
    "placeholderId": "seat_2",
    "type": "terminal",
-   "content": "{\"name\": \"Gemini CLI\", \"agentic\": true, \"bootCommand\": \"# ===== PokerBench seat: an agent terminal like any other =====\\n# Log in here as usual and leave it at its prompt. Linked to the engine terminal, it\\n# takes a seat (the table shows it ready); at Start it is given the poker prompt.\\nMODEL=                  # blank: the default model\\nexport MODEL PATH=\\\"/tmp/pokerbench/bin:$PATH\\\" POKER_CLI=/tmp/pokerbench/bin/poker\\n( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done\\n  exec bash /tmp/pokerbench/seat.sh helper google ) >/dev/null 2>&1 &\\nexec gemini ${MODEL:+-m \\\"$MODEL\\\"} --yolo --skip-trust --include-directories /tmp/pokerbench\\n\", \"subagentIds\": [], \"skillIds\": [], \"mcpToolIds\": []}",
+   "content": "{\"name\": \"Gemini CLI\", \"agentic\": true, \"autoApproveFlagged\": true, \"bootCommand\": \"# ===== PokerBench seat: an agent terminal like any other =====\\n# Log in here as usual and leave it at its prompt. Linked to the engine terminal, it\\n# takes a seat (the table shows it ready); at Start it is given the poker prompt.\\nMODEL=                  # blank: the default model\\nexport MODEL PATH=\\\"/tmp/pokerbench/bin:$PATH\\\" POKER_CLI=/tmp/pokerbench/bin/poker\\n( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done\\n  exec bash /tmp/pokerbench/seat.sh helper google ) >/dev/null 2>&1 &\\nexec gemini ${MODEL:+-m \\\"$MODEL\\\"} --yolo --skip-trust --include-directories /tmp/pokerbench\\n\", \"subagentIds\": [], \"skillIds\": [], \"mcpToolIds\": []}",
    "position": {
     "x": 1040,
     "y": 0

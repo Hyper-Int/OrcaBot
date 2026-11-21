@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v34-auto-sleep
-const sessionsRevision = "sessions-v34-auto-sleep";
+// REVISION: sessions-v35-gemini-auto-approve
+const sessionsRevision = "sessions-v35-gemini-auto-approve";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -115,6 +115,9 @@ interface TerminalContent {
   ttsVoice?: string;
   workingDir?: string;
   skipApprovals?: boolean;
+  // Gemini CLI: answer its "Untrusted Command Flags" prompt (which --yolo doesn't
+  // cover) with "Allow once" (sandbox/internal/geminiapprove). Benchmarks turn it on.
+  autoApproveFlagged?: boolean;
   modelSelection?: ModelSelection;
 }
 
@@ -122,6 +125,7 @@ interface ParsedTerminalConfig {
   bootCommand: string;
   workingDir?: string;
   modelSelection?: ModelSelection;
+  autoApproveFlagged?: boolean;
 }
 
 // ElevenLabs voice name to ID mapping
@@ -222,7 +226,10 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
           }
         : undefined;
 
-    return { bootCommand, workingDir, modelSelection };
+    // REVISION: sessions-v35-gemini-auto-approve
+    const autoApproveFlagged = parsed.autoApproveFlagged === true ? true : undefined;
+
+    return { bootCommand, workingDir, modelSelection, autoApproveFlagged };
   } catch {
     return { bootCommand: '' };
   }
@@ -1592,7 +1599,7 @@ async function createSessionImpl(
 
   try {
     const terminalConfig = parseTerminalConfig(item.content);
-    const { bootCommand, workingDir, modelSelection } = terminalConfig;
+    const { bootCommand, workingDir, modelSelection, autoApproveFlagged } = terminalConfig;
     // NOTE: per-dashboard workspace isolation on desktop is handled in the SANDBOX
     // (manager.Create roots each session at /workspace/<dashboardID>), so it applies
     // uniformly to every dashboard-scoped execution path, not just this UI-terminal
@@ -1671,6 +1678,7 @@ async function createSessionImpl(
           modelSelection,
           dashboardToken,
           autoSleep,
+          autoApproveFlagged,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1681,6 +1689,7 @@ async function createSessionImpl(
             modelSelection,
             dashboardToken,
             autoSleep,
+            autoApproveFlagged,
           });
         } else {
           throw wdErr;
@@ -1732,6 +1741,7 @@ async function createSessionImpl(
         modelSelection,
         dashboardToken: await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId),
         autoSleep,
+        autoApproveFlagged,
       });
     }
 

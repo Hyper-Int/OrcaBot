@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v13-no-connected-banner
-const TERMINAL_BLOCK_REVISION = "terminal-block-v13-no-connected-banner";
+// REVISION: terminal-block-v14-gemini-auto-approve
+const TERMINAL_BLOCK_REVISION = "terminal-block-v14-gemini-auto-approve";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -262,6 +262,9 @@ type TerminalContentState = {
   ttsProvider?: string;
   ttsVoice?: string;
   skipApprovals?: boolean;
+  // Gemini CLI only: answer its "Untrusted Command Flags" prompt (which --yolo doesn't
+  // cover) with "Allow once" automatically. On in benchmark templates, off otherwise.
+  autoApproveFlagged?: boolean;
   modelSelection?: ModelSelection;
 };
 
@@ -494,6 +497,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         ttsProvider: parsed.ttsProvider,
         ttsVoice: parsed.ttsVoice,
         skipApprovals: parsed.skipApprovals,
+        autoApproveFlagged: parsed.autoApproveFlagged,
         modelSelection: parsed.modelSelection,
       };
     } catch {
@@ -793,6 +797,8 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (session?.id) setPendingConfigRestart(true);
@@ -1209,6 +1215,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1289,6 +1296,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1360,6 +1368,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1383,6 +1392,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1407,6 +1417,37 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: checked,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
+          modelSelection: terminalMeta.modelSelection,
+        }),
+      });
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
+    },
+    [data, terminalMeta, session?.id]
+  );
+
+  // Gemini CLI only. Applies when the terminal (re)starts, like Skip Permissions.
+  const handleAutoApproveFlaggedChange = React.useCallback(
+    (checked: boolean) => {
+      if (!data.onItemChange) return;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: checked,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (session?.id) {
@@ -1443,6 +1484,7 @@ export function TerminalBlock({
           ttsProvider: newProvider,
           ttsVoice: newVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1486,6 +1528,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: resolved,
         }),
       });
@@ -1621,6 +1664,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1651,6 +1695,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1741,6 +1786,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -1770,6 +1816,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          autoApproveFlagged: terminalMeta.autoApproveFlagged,
           modelSelection: terminalMeta.modelSelection,
         }),
       });
@@ -4425,6 +4472,32 @@ export function TerminalBlock({
                     <span>Skip Permissions</span>
                   </DropdownMenuItem>
                 </>
+              )}
+              {/* Auto-approve flagged commands - Gemini CLI only (its untrusted-flags prompt ignores --yolo) */}
+              {terminalType === "gemini" && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    handleAutoApproveFlaggedChange(!(terminalMeta.autoApproveFlagged ?? false));
+                  }}
+                  className="gap-2"
+                  title={
+                    "Gemini CLI still stops to ask before running a command that reuses text it read " +
+                    "earlier (a path, URL or flag from a command's output or a file), with a " +
+                    "\"CRITICAL SECURITY WARNING: Untrusted Command Flags\" prompt. Skip Permissions " +
+                    "(--yolo) doesn't cover it, so an unattended Gemini can sit waiting for hours. " +
+                    "When on, Orcabot answers that prompt with \"Allow once\" for you. On by default in " +
+                    "benchmark templates; leave it off when you want to check those commands yourself. " +
+                    "Applies when the terminal restarts."
+                  }
+                >
+                  {terminalMeta.autoApproveFlagged ? (
+                    <Check className="w-3 h-3 text-[var(--foreground)]" />
+                  ) : (
+                    <X className="w-3 h-3 text-[var(--foreground-muted)] opacity-40" />
+                  )}
+                  <span>Auto-approve flagged commands</span>
+                </DropdownMenuItem>
               )}
               <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
             </DropdownMenuContent>

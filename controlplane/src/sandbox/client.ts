@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v7-auto-sleep
-const sandboxClientRevision = "sandbox-client-v7-auto-sleep";
+// REVISION: sandbox-client-v8-gemini-auto-approve
+const sandboxClientRevision = "sandbox-client-v8-gemini-auto-approve";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -244,6 +244,9 @@ export class SandboxClient {
       // watching). Session-wide on the sandbox; sent with every PTY so a new VM or
       // session has it before its first terminal could idle out.
       autoSleep?: boolean;
+      // Gemini CLI: the sandbox answers its "Untrusted Command Flags" prompt with
+      // "Allow once" (the terminal's Auto-approve flagged commands setting).
+      autoApproveFlagged?: boolean;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
         provider: 'default' | 'openrouter' | 'custom';
@@ -259,7 +262,7 @@ export class SandboxClient {
     const shouldSendBody = Boolean(
       creatorId || command || options?.ptyId || options?.integrationToken ||
       options?.workingDir || options?.executionId || options?.modelSelection ||
-      options?.dashboardToken || options?.autoSleep !== undefined
+      options?.dashboardToken || options?.autoSleep !== undefined || options?.autoApproveFlagged
     );
     const body = shouldSendBody
       ? JSON.stringify({
@@ -278,6 +281,7 @@ export class SandboxClient {
           // Same field name as POST /sessions (cpauth dashboard token)
           mcp_token: options?.dashboardToken,
           auto_sleep: options?.autoSleep,
+          auto_approve_flagged: options?.autoApproveFlagged || undefined,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());

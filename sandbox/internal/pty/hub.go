@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v7-auto-sleep-off
+// REVISION: hub-v8-output-watchers
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const hubRevision = "hub-v7-auto-sleep-off"
+const hubRevision = "hub-v8-output-watchers"
 
 func init() {
 	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
@@ -141,6 +141,12 @@ type Hub struct {
 
 	// onStop callbacks invoked when hub stops (for cleanup by owner)
 	onStop []func()
+
+	// Output watchers see the output as clients do (after redaction), e.g. the
+	// Gemini untrusted-flags auto-approver. They must not block.
+	// REVISION: hub-v8-output-watchers
+	watchersMu     sync.RWMutex
+	outputWatchers []func([]byte)
 
 	suppressMu      sync.Mutex
 	suppressActive  bool
@@ -365,6 +371,12 @@ func (h *Hub) broadcast(data []byte) {
 	// Store in scrollback ring buffer (post-redaction)
 	h.appendScrollback(data)
 
+	h.watchersMu.RLock()
+	for _, watch := range h.outputWatchers {
+		watch(data)
+	}
+	h.watchersMu.RUnlock()
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -502,6 +514,15 @@ func (h *Hub) Stop() {
 // Use this to clean up references to the hub (e.g., remove from session's PTY map).
 func (h *Hub) SetOnStop(fn func()) {
 	h.onStop = []func(){fn}
+}
+
+// AddOutputWatcher calls fn with every chunk of output, as clients see it (after
+// secret redaction). fn must return quickly and must not keep data.
+// REVISION: hub-v8-output-watchers
+func (h *Hub) AddOutputWatcher(fn func([]byte)) {
+	h.watchersMu.Lock()
+	h.outputWatchers = append(h.outputWatchers, fn)
+	h.watchersMu.Unlock()
 }
 
 // AddOnStop appends an additional callback invoked when the hub stops.

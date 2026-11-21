@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v51-auto-sleep
+// REVISION: main-v52-gemini-auto-approve
 
 package main
 
@@ -37,12 +37,13 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminiapprove"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v50-machine-controlplane-url"
+const mainRevision = "main-v52-gemini-auto-approve"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -980,7 +981,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
 		MCPToken         string `json:"mcp_token"`         // Fresh dashboard token (replaces a dropped one)
 		AutoSleep        *bool  `json:"auto_sleep"`        // Dashboard's Auto sleep (absent = leave as is; default on)
-		ModelSelection   *struct {
+		// The terminal's Auto-approve flagged commands (Gemini CLI): answer its
+		// untrusted-flags prompt with "Allow once". REVISION: main-v52-gemini-auto-approve
+		AutoApproveFlagged bool `json:"auto_approve_flagged"`
+		ModelSelection     *struct {
 			Provider        string `json:"provider"`
 			Model           string `json:"model"`
 			ContextWindow   int    `json:"contextWindow"`
@@ -1047,6 +1051,15 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Gemini's untrusted-flags prompt ignores --yolo; when the terminal asks for it,
+	// answer it for an unattended agent. Only that dialog is ever answered, and each
+	// answer is logged. REVISION: main-v52-gemini-auto-approve
+	if req.AutoApproveFlagged && ptyInfo.Hub != nil {
+		approver := geminiapprove.New(ptyInfo.Hub, ptyInfo.ID)
+		ptyInfo.Hub.AddOutputWatcher(approver.Observe)
+		ptyInfo.Hub.AddOnStop(approver.Stop)
 	}
 
 	// Store execution ID and register process-exit callback BEFORE responding.
