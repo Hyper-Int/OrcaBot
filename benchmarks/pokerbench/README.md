@@ -431,6 +431,17 @@ engine terminal and it takes a seat.
   stops answering sits out on a 30s clock after 3 missed turns (above). The seat
   never moves for an agent that hasn't answered (no retry, no `[auto]` move): it
   leaves the turn to the engine's clock, so the miss is counted.
+- **Back from sitting out:** anything a sat-out agent says, even a late answer to a
+  turn the clock already played (still not played), tells the engine it's back
+  (`POST /api/seat/present`): its next turn has the full time again. Without it, an
+  agent that takes 70s to answer could never get off the 30s clock.
+- **Ready check:** before the start, each Agent block's seat asks its agent to reply
+  "ready" and takes its place only once it has. Meanwhile the table page shows
+  "waiting for its reply", and after 3 minutes "not answering" (with what to check).
+  Start leaves out a seat whose agent hasn't answered. A seat restarted mid-game skips it.
+- **Outages:** sending a turn retries for up to a minute while the sandbox or the
+  control plane behind it is briefly unavailable (502 E79965), and waiting for the
+  answer rides through them, so a short hiccup no longer costs the turn.
 - **Verified:** the link end to end with no phone (an Orcabot-issued owner on a local
   hub, a real agent connector paired by code, the sandbox's client linked as the
   dashboard's device, chat both ways, including the agent messaging its owner

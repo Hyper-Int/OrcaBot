@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v14-resume-sit-out
+# REVISION: pokerbench-engine-v15-present
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v14-resume-sit-out"
+ENGINE_REVISION = "pokerbench-engine-v15-present"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -648,6 +648,8 @@ class Match:
         self.counters = {seat: _zero_counters() for seat in cfg.seats}
         # Turns in a row each seat let time out (cfg.sit_out_after: it is sitting out).
         self.missed: dict[str, int] = {seat: 0 for seat in cfg.seats}
+        # Sitting-out seats whose player said it's back during its own (short) turn.
+        self.back_next: set[str] = set()
         # The table page's settings: a cash game is duplicated unless the run was set up without it.
         self.duplicate_default = cfg.duplicate or cfg.format == "tournament"
         self.started_at = iso_now()
@@ -1276,6 +1278,24 @@ class Match:
     def sitting_out(self, seat: str) -> bool:
         return bool(self.cfg.sit_out_after) and self.missed.get(seat, 0) >= self.cfg.sit_out_after
 
+    def present(self, seat: str) -> dict:
+        """A sitting-out seat's player is back: an agent seat heard from its agent (even a
+        late answer to a turn the clock already played). Its turns get the full time
+        again from its next one; a turn already running keeps its short clock, and its
+        running out then isn't counted as a miss."""
+        with self.cond:
+            if self.status != "running" or not self.sitting_out(seat):
+                return {"ok": True, "back": False, "sitting_out": False}
+            if self._to_act(seat):
+                self.back_next.add(seat)
+                return {"ok": True, "back": True, "sitting_out": True, "from_next_turn": True}
+            self.missed[seat] = 0
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "back_in", "seat": seat,
+                                             "hand": self.hand.number if self.hand else None,
+                                             "via": "present"})
+            self._bump()
+            return {"ok": True, "back": True, "sitting_out": False}
+
     def _timeout_for(self, seat: str) -> float:
         """A seat's time per decision: turn_timeout, or the short sit-out clock."""
         if self.sitting_out(seat):
@@ -1410,6 +1430,7 @@ class Match:
                 })
                 raise
             self._log_decision(seat, before, record, reason, timed_out=False)
+            self.back_next.discard(seat)
             if self.missed.get(seat):
                 if self.sitting_out(seat):
                     self.log.append("events.jsonl", {"ts": iso_now(), "type": "back_in", "seat": seat,
@@ -1479,7 +1500,13 @@ class Match:
             self.log.append("events.jsonl", {"ts": iso_now(), "type": "turn_timeout", "hand": hand.number,
                                              "seat": seat, "auto_action": action})
             self._log_decision(seat, ctx, record, None, timed_out=True)
-            self.missed[seat] = self.missed.get(seat, 0) + 1
+            if seat in self.back_next:  # it said it's back during this turn: not a miss
+                self.back_next.discard(seat)
+                self.missed[seat] = 0
+                self.log.append("events.jsonl", {"ts": iso_now(), "type": "back_in", "seat": seat,
+                                                 "hand": hand.number, "via": "present"})
+            else:
+                self.missed[seat] = self.missed.get(seat, 0) + 1
             if self.cfg.sit_out_after and self.missed[seat] == self.cfg.sit_out_after:
                 self.log.append("events.jsonl", {"ts": iso_now(), "type": "sitting_out", "seat": seat,
                                                  "hand": hand.number, "timeout_s": self._timeout_for(seat)})

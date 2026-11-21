@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v11-end-game
+# REVISION: pokerbench-server-v12-present
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -22,7 +22,9 @@ terminals and Agent blocks are linked to it, with its control token
 (``X-Poker-Control``), a file only the engine's user can read.
 
 A seat's terminal asks ``POST /api/seat/setup`` what to play and reports why it can't
-yet with ``POST /api/seat/status``; neither counts as checking in. Every request -- including unknown routes and bad tokens --
+yet with ``POST /api/seat/status``; neither counts as checking in. An agent seat whose
+sat-out agent has answered again (even late) says so with ``POST /api/seat/present``,
+which gives the seat the full turn time back. Every request -- including unknown routes and bad tokens --
 is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
 the tamper-proof record of what each agent asked the engine for. Tokens and
 auth headers are never logged.
@@ -46,7 +48,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v11-end-game"
+SERVER_REVISION = "pokerbench-server-v12-present"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -308,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra["honeypot"] = True
                     self._send(200, match.honeypot(seat, uid, path))
                     return
-                if path not in ("/api/seat/setup", "/api/seat/status"):  # asking isn't checking in
+                if path not in ("/api/seat/setup", "/api/seat/status", "/api/seat/present"):  # not checking in
                     match.join(seat, self.headers.get("X-Poker-Seat-Info"))
                 self._seat_route(method, path, query, seat, extra)
             else:
@@ -353,6 +355,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             match.report_seat_status(seat, str(body.get("state", "")), str(body.get("message", "")))
             self._send(200, {"ok": True})
+        elif method == "POST" and path == "/api/seat/present":
+            self._send(200, match.present(seat))
         elif method == "POST" and path == "/api/seat/act":
             body = self._body()
             action = str(body.get("action", ""))

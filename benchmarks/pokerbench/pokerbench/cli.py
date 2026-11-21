@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v11-resume-sit-out
+# REVISION: pokerbench-cli-v12-present
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v11-resume-sit-out"
+CLI_REVISION = "pokerbench-cli-v12-present"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -330,6 +330,20 @@ class Client:
 
     def history(self, n: int) -> dict:
         return self._req("GET", f"/api/seat/history?n={n}")
+
+    # Seat helpers (not agents): these don't check the seat in.
+    def setup(self) -> dict:
+        """What this seat plays and the game's status ({"status", "in_game", ...})."""
+        return self._req("POST", "/api/seat/setup", {})
+
+    def report_status(self, state: str, message: str) -> None:
+        """Why the seat isn't ready yet, for the table page: state "checking" or "needs"."""
+        self._req("POST", "/api/seat/status", {"state": state, "message": message})
+
+    def present(self) -> dict:
+        """The seat's player is back (a sitting-out agent seat heard from its agent):
+        {"back": bool, "sitting_out": bool, "deferred"?: true while its turn runs}."""
+        return self._req("POST", "/api/seat/present", {})
 
     def wait_for_turn(self, total: float, until_change: bool = False) -> dict:
         """Wait up to ``total`` seconds for this seat's turn (or the end). ``until_change``:

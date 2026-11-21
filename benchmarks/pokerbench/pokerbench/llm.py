@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v7-no-reply-is-a-miss
+# REVISION: pokerbench-llm-v8-present
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v7-no-reply-is-a-miss"
+LLM_REVISION = "pokerbench-llm-v8-present"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -340,6 +340,8 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
 
     # Chat seats keep their agent posted between turns (provider.between_turns).
     keep_posted = hasattr(provider, "between_turns")
+    if hasattr(provider, "attach"):  # chat seats tell the engine when a sat-out agent is back
+        provider.attach(client)
     try:
         while True:
             view = client.wait_for_turn(max_wait, until_change=keep_posted)

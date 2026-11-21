@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v5-no-reply-is-a-miss
+# REVISION: pokerbench-chatseat-v6-present-check-in
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
@@ -20,6 +20,13 @@ it can check its messages more often when its turn is close. It answers with one
 before the move ("thinking...") is skipped, and an unusable or illegal move goes back
 with the reason through the same loop as direct model seats (``llm.play``).
 
+Before the game starts, the seat asks its agent to reply "ready" (``check_in``), and only
+takes its place at the table once it has: until then the table page shows that it's
+waiting for the agent, then that the agent isn't answering, and a game started without
+an answer leaves the seat out. An agent that misses turns in a row is sat out on a short
+clock by the engine; anything it says afterwards (even a late answer, which still isn't
+played) tells the engine it's back (``present``), so its next turn gets the full time.
+
 How the message travels is the subclass's job: ``agentlink`` (an Orcabot Agent block
 connected to the table) or ``siren`` (a standalone MLS client, outside Orcabot).
 """
@@ -33,7 +40,7 @@ from collections.abc import Iterator
 
 from .llm import ACTIONS, Decision, NoReply, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v5-no-reply-is-a-miss"
+CHATSEAT_REVISION = "pokerbench-chatseat-v6-present-check-in"
 
 INTRO = """\
 [PokerBench] Your owner has seated you at a poker table. This is a LIVE, TIMED game: \
@@ -55,6 +62,15 @@ hand is checked or folded for you.
 how soon your turn comes. They need no reply; don't answer them. When your turn is close, \
 check your messages often so you see your turn as soon as it arrives.
 """
+
+CHECK_IN = """\
+[PokerBench] Your owner has seated you at a poker table that starts soon. Reply "ready" \
+now (just that word) so the table knows you're here. The rules come with your first turn."""
+
+# How long before the table page says the agent isn't answering (it can still answer).
+NOT_ANSWERING_AFTER_S = 180.0
+# Between turns, look for late answers at most this often (each look is a request).
+DRAIN_EVERY_S = 15.0
 
 HAND_NO = re.compile(r"Hand (\d+)\b")
 TURN_FIELD = re.compile(r'"turn"\s*:\s*"?(\d+)')
@@ -117,6 +133,10 @@ class ChatSeat:
         self.introduced = False
         self.turn = 0  # numbered turns: an answer names its turn
         self.turn_deadline: float | None = None  # set by llm.play: when the engine's clock runs out
+        self.engine = None  # the seat's engine client (attach): to say the agent is back
+        self.want_back = False  # heard from the agent while sitting out; tell the engine
+        self.last_heard: float | None = None
+        self._drained_at = 0.0
         self.view: dict = {}
         self.updated: tuple | None = None  # (hand, actions seen) of the last update sent
 
@@ -125,6 +145,99 @@ class ChatSeat:
 
     def _replies(self, deadline: float) -> Iterator[str]:
         raise NotImplementedError
+
+    def _pending(self) -> list[str]:
+        """The agent's messages that arrived since the last look, without waiting
+        (subclasses that can look without a turn override this)."""
+        return []
+
+    # -- hearing from the agent ------------------------------------------------------
+    def attach(self, client) -> None:
+        """llm.play hook: the seat's engine client."""
+        self.engine = client
+
+    def _heard(self) -> None:
+        """The agent said something (an answer, a late answer, chatter): it's there."""
+        self.last_heard = time.monotonic()
+        if self.view.get("sitting_out"):
+            self.want_back = True
+        self._maybe_back()
+
+    def _maybe_back(self) -> None:
+        """Tell the engine a sitting-out agent is back (tried again at the next look if
+        the engine can't be reached)."""
+        if not self.want_back or self.engine is None:
+            return
+        try:
+            r = self.engine.present()
+        except Exception:  # noqa: BLE001 -- try again at the next look
+            return
+        self.want_back = False
+        if r.get("back") and not r.get("from_next_turn"):
+            self.view = {**self.view, "sitting_out": False}
+
+    def drain(self, force: bool = True) -> None:
+        """Look for messages that came in since the last look (late answers)."""
+        if not force and time.monotonic() - self._drained_at < DRAIN_EVERY_S:
+            return
+        self._drained_at = time.monotonic()
+        try:
+            heard = bool(self._pending())
+        except Exception:  # noqa: BLE001 -- a look is a courtesy
+            heard = False
+        if heard:
+            self._heard()
+        else:
+            self._maybe_back()
+
+    def check_in(self, client, say=lambda line: None, poll: float = 10.0) -> bool:
+        """Before the game starts: ask the agent to reply "ready" and wait for any answer,
+        telling the table page meanwhile. True to play: it answered, or the game is
+        already running with this seat (a restarted seat). False: the game started
+        without it."""
+        view = client.setup()
+        if view.get("status") != "waiting_for_players":
+            return bool(view.get("in_game"))
+        name = self.agent.rsplit(":", 1)[-1]
+        while True:  # the message must go out first (the agent may not be linked yet)
+            try:
+                self._post(CHECK_IN)
+                break
+            except ProviderError as e:
+                say(f"(couldn't message {name}: {e})")
+                try:
+                    client.report_status("needs", f"Couldn't message {name}: {e}")
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(poll)
+            view = client.setup()
+            if view.get("status") != "waiting_for_players":
+                return bool(view.get("in_game"))
+        asked = time.monotonic()
+        say(f"asked {name} to reply \"ready\"")
+        shown = None
+        while True:
+            left = asked + NOT_ANSWERING_AFTER_S - time.monotonic()
+            status = ("checking", f"Asked {name} to reply \"ready\"; waiting for its answer.") if left > 0 else (
+                "needs", f"{name} isn't answering its messages (asked {int((time.monotonic() - asked) // 60)} "
+                         f"min ago). Check its Agent block's chat; the game starts without it unless it answers.")
+            if status[0] != shown:
+                try:
+                    client.report_status(*status)
+                    shown = status[0]
+                except Exception:  # noqa: BLE001 -- the table page just shows less
+                    pass
+            try:
+                for _ in self._replies(time.monotonic() + poll):
+                    self.last_heard = time.monotonic()
+                    say(f"{name} answered")
+                    return True
+            except ProviderError as e:
+                say(f"(couldn't read {name}'s messages: {e})")
+                time.sleep(min(poll, 5.0))
+            view = client.setup()
+            if view.get("status") != "waiting_for_players":
+                return bool(view.get("in_game"))
 
     def message(self, system: str, blocks: list[str]) -> str:
         """What to send this turn: the intro once, the finished hands the agent hasn't
@@ -166,14 +279,16 @@ class ChatSeat:
         return intro_system(view, self.turn_limit)
 
     def decide(self, system: str, blocks: list[str]) -> Decision:
+        self.drain()  # late answers since the last turn: the agent is there
         text = self.message(system, blocks)
         self.introduced = True
         self._post(text)
         last = None
         for reply in self._replies(time.monotonic() + (self._seconds_left() or self.turn_limit)):
+            self._heard()
             named = TURN_FIELD.search(reply or "")
             if named and int(named.group(1)) != self.turn:
-                continue  # a late answer to an earlier turn
+                continue  # a late answer to an earlier turn: not played, but it's back
             last = reply
             try:
                 action, amount, reason = parse_reply(reply)
@@ -190,6 +305,9 @@ class ChatSeat:
         intro (the agent knows the game), and only while a turn is coming on this street."""
         from .cli import _fmt_action, turn_coming
 
+        self.view = view
+        if self.introduced:
+            self.drain(force=False)  # a late answer: tell the engine the agent is back
         m = view.get("match") or {}
         if (not self.introduced or m.get("status") != "running" or m.get("paused") or view.get("resuming")
                 or not view.get("you") or view.get("turn_in") is None):

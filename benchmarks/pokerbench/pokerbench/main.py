@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v14-resume
+# REVISION: pokerbench-main-v15-check-in
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -33,7 +33,7 @@ from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig, load_checkp
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v14-resume"
+MAIN_REVISION = "pokerbench-main-v15-check-in"
 # Seats that play from a process of their own (bots, API models, Agent blocks) wait this
 # long for an engine that isn't listening: it may be restarting, to carry the game on.
 SEAT_RETRY_S = 900.0
@@ -237,6 +237,10 @@ def cmd_agent_seat(args) -> int:
                     token_file=args.token_file)
     print(f"agent-seat: {name} plays {args.seat or os.environ.get('POKER_SEAT')}", flush=True)
     feed = None if args.quiet else (lambda line: print(line, flush=True))
+    # Take the seat only once the agent has answered (the table page shows the wait).
+    if not seat.check_in(client, say=lambda line: print(f"agent-seat: {line}", flush=True)):
+        print(f"agent-seat: the game started without {name} (it hadn't answered)", flush=True)
+        return 0
     final = play_llm(client, seat, max_retries=args.max_retries,
                      log_path=Path(args.log) if args.log else None, feed=feed)
     seat.game_over(final)
@@ -258,6 +262,9 @@ def cmd_siren_seat(args) -> int:
                     token_file=args.token_file)
     feed = None if args.quiet else (lambda line: print(line, flush=True))
     try:
+        if not provider.check_in(client, say=lambda line: print(f"siren-seat: {line}", flush=True)):
+            print("siren-seat: the game started without this seat (its agent hadn't answered)", flush=True)
+            return 0
         final = play_llm(client, provider, max_retries=args.max_retries,
                          log_path=Path(args.log) if args.log else None, feed=feed)
     finally:

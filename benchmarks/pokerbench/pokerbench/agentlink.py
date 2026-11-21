@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-agentlink-v3-terminal-links
+# REVISION: pokerbench-agentlink-v4-retry
 """Agent seats in Orcabot: an Agent block (an outside agent such as Grok Bot, Muse or
 Dots, linked to the dashboard owner) connected to the table's engine terminal plays
 a seat.
@@ -34,7 +34,7 @@ from collections.abc import Iterator
 from .chatseat import ChatSeat
 from .llm import ProviderError
 
-AGENTLINK_REVISION = "pokerbench-agentlink-v3-terminal-links"
+AGENTLINK_REVISION = "pokerbench-agentlink-v4-retry"
 PRIVILEGED_SOCK = "/run/orcabot/privileged.sock"
 
 
@@ -112,12 +112,30 @@ class AgentLinkClient:
         """The agents this terminal is connected to: [{identity, name, itemId}]."""
         return self._request("GET", "")["agents"]
 
-    def send(self, agent: str, text: str) -> int:
-        return int(self._request("POST", "send", body={"agent": agent, "text": text}, timeout=60)["seq"])
+    def send(self, agent: str, text: str, retry_for: float = 0.0) -> int:
+        """Send a message; for up to retry_for seconds, try again while the sandbox or the
+        control plane behind it is briefly unavailable (a 20-second hiccup on 2026-11-20
+        cost every Agent block three hands)."""
+        give_up = time.monotonic() + retry_for
+        pause = 1.0
+        while True:
+            try:
+                return int(self._request("POST", "send", body={"agent": agent, "text": text}, timeout=60)["seq"])
+            except SandboxError as e:
+                if not transient(e) or time.monotonic() + pause > give_up:
+                    raise
+                time.sleep(pause)
+                pause = min(pause * 2, 8.0)
 
     def messages(self, agent: str, after: int, wait: int) -> list[dict]:
         r = self._request("GET", "messages", {"agent": agent, "after": after, "wait": wait}, timeout=wait + 15)
         return r.get("messages") or []
+
+
+def transient(e: SandboxError) -> bool:
+    """Worth trying again: the sandbox didn't answer, or couldn't reach the control plane
+    (E79965, 502) or was briefly unavailable. Refusals (4xx) aren't."""
+    return e.status == 0 or e.status in (502, 503, 504)
 
 
 class AgentLinkSeat(ChatSeat):
@@ -131,11 +149,28 @@ class AgentLinkSeat(ChatSeat):
         self.after = 0
 
     def _post(self, text: str) -> None:
-        self.after = self.client.send(self.agent, text)
+        # Keep trying through a short outage, but leave time to answer.
+        left = self._seconds_left() or self.turn_limit
+        self.after = self.client.send(self.agent, text, retry_for=max(0.0, min(60.0, left - 15)))
 
     def _replies(self, deadline: float) -> Iterator[str]:
         while (left := deadline - time.monotonic()) > 1:
-            for m in self.client.messages(self.agent, self.after, int(min(left, 60))):
+            try:
+                got = self.client.messages(self.agent, self.after, int(min(left, 60)))
+            except SandboxError as e:
+                if not transient(e):
+                    raise
+                time.sleep(min(2.0, max(0.0, left - 1)))  # a hiccup: keep waiting for the answer
+                continue
+            for m in got:
                 self.after = max(self.after, int(m.get("seq") or 0))
                 if m.get("from") == "agent":
                     yield m.get("text") or ""
+
+    def _pending(self) -> list[str]:
+        out = []
+        for m in self.client.messages(self.agent, self.after, 0):
+            self.after = max(self.after, int(m.get("seq") or 0))
+            if m.get("from") == "agent":
+                out.append(m.get("text") or "")
+        return out

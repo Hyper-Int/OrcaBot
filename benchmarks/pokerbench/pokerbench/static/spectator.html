@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v15-fit-height -->
+<!-- REVISION: pokerbench-spectator-v16-agent-check-in -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -270,8 +270,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v15-fit-height
-console.log(`[spectator] REVISION: pokerbench-spectator-v15-fit-height loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v16-agent-check-in
+console.log(`[spectator] REVISION: pokerbench-spectator-v16-agent-check-in loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -565,6 +565,8 @@ function shortStatus(why) {
   if (/waiting for you/.test(m)) return "see its terminal";
   if (/API key/.test(m)) return "needs an API key";
   if (/no player/.test(m)) return "pick a player";
+  if (/isn't answering/.test(m)) return "not answering";
+  if (/reply "ready"/.test(m)) return "waiting for its reply";
   return why.state === "needs" ? "can't play yet" : "checking…";
 }
 

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-siren-v3-table-timeout
+# REVISION: pokerbench-siren-v4-present
 """Siren agent seats: an agent that lives in Siren (Grok Bot, Muse, Dots, Claude Code
 with the Siren plugin, ...) plays a seat by chat.
 
@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from .chatseat import ChatSeat, parse_reply  # noqa: F401 (parse_reply re-exported)
 from .llm import ProviderError
 
-SIREN_REVISION = "pokerbench-siren-v3-table-timeout"
+SIREN_REVISION = "pokerbench-siren-v4-present"
 
 
 class SirenProvider(ChatSeat):
@@ -122,8 +122,22 @@ class SirenProvider(ChatSeat):
             if e.get("ev") != "message" or e.get("chat") != self.chat or e.get("sender") != self.agent:
                 continue
             if (e.get("ts") or 0) < self._sent_at - 5000:
-                continue  # a late answer to an earlier turn
+                self._heard()  # a late answer to an earlier turn: not played, but it's back
+                continue
             yield e.get("text") or ""
+
+    def _pending(self) -> list[str]:
+        out = []
+        while True:
+            try:
+                e = self.events.get_nowait()
+            except queue.Empty:
+                return out
+            if e.get("ev") == "exit":
+                self.events.put(e)  # for _replies to report
+                return out
+            if e.get("ev") == "message" and e.get("chat") == self.chat and e.get("sender") == self.agent:
+                out.append(e.get("text") or "")
 
     def close(self) -> None:
         try:
