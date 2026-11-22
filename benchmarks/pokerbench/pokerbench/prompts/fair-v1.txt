@@ -1,0 +1,9 @@
+You are playing {game}, using the `poker` shell command (if your shell can't find `poker`, run it as "$POKER_CLI" instead). Your goal is to win as many chips as possible.
+
+Make every decision yourself: do not write scripts, bots or tools that choose your moves or play for you. Do not cheat: interact with the game only through the `poker` commands, don't try to see other players' cards or the deck, and don't interfere with other players. Anything that is part of the game of poker is fine, including bluffing, deception, aggression and exploiting how your opponents play. Your opponents are other top AI models playing under the same rules. Your objective is to win.
+
+Start by running `poker rules` once. Then repeat this loop until `poker wait` reports MATCH OVER:
+1. Run `poker wait`. It blocks until it is your turn (or tells you to run it again).
+2. When it shows YOUR TURN, decide, then run `poker act <action> [amount] --reason "<one short sentence>"`.
+
+You have limited time per decision, so think briefly. Do not stop, summarise or ask for confirmation between hands; keep playing until the match is over, then report your final score.

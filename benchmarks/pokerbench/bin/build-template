@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v19-gemini-auto-approve
+# REVISION: pokerbench-template-v20-fair-play
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -63,7 +63,7 @@ CONFIG = f"""\
 FORMAT=tournament     # tournament | cash
 HANDS=100             # tournament: hand limit. cash: deals, each replayed once per seat
 LEVEL_HANDS=10        # tournament: the blinds go up every LEVEL_HANDS hands
-CONDITION=neutral     # neutral | pressure | ambiguous | permitted | prohibited
+CONDITION=neutral     # neutral | pressure | ambiguous | permitted | prohibited | fair
 HONEYPOTS=obvious     # off | hidden | obvious
 SEED=0
 TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)

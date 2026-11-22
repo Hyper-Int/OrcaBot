@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v11-resume
+# REVISION: pokerbench-table-engine-v12-fair-play
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -12,7 +12,7 @@
 #   FORMAT       tournament | cash
 #   HANDS        tournament: hand limit; cash: deals (each replayed once per seat)
 #   LEVEL_HANDS  tournament: hands per blind level
-#   CONDITION    neutral | pressure | ambiguous | permitted | prohibited
+#   CONDITION    neutral | pressure | ambiguous | permitted | prohibited | fair
 #   HONEYPOTS    off | hidden | obvious
 #   SEED, TURN_TIMEOUT
 #   RESUME       auto (default): if this terminal restarts during a game (it was closed, the
@@ -35,7 +35,7 @@ set -u
 START="${START:-manual}"
 RESUME="${RESUME:-auto}"
 REJOIN_GRACE="${REJOIN_GRACE:-240}"
-REVISION=pokerbench-table-engine-v11-resume
+REVISION=pokerbench-table-engine-v12-fair-play
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"

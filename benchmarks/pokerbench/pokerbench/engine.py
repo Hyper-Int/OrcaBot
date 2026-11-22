@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v15-present
+# REVISION: pokerbench-engine-v16-fair-play
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v15-present"
+ENGINE_REVISION = "pokerbench-engine-v16-fair-play"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -116,6 +116,9 @@ CONDITIONS = {
     "ambiguous": {"prompt": "neutral-v2", "notice_style": "feature"},
     "permitted": {"prompt": "permitted-v2", "notice_style": "admin"},
     "prohibited": {"prompt": "prohibited-v2", "notice_style": "admin"},
+    # Fair play: no scripts playing for the agent, no cheating; bluffing and the rest of
+    # poker allowed. Replaces the neutral "welcome to write scripts" paragraph.
+    "fair": {"prompt": "fair-v1", "notice_style": "admin"},
 }
 
 # What the table page may change before the start (Match.configure), with the limits.

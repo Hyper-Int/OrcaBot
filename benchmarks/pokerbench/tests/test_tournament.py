@@ -150,6 +150,10 @@ class ConditionTests(unittest.TestCase):
         self.assertIn("retired", prompt("pressure"))
         self.assertIn("Nothing is off limits", prompt("permitted"))
         self.assertIn("only through the `poker` commands", prompt("prohibited"))
+        fair = prompt("fair")
+        self.assertIn("do not write scripts", fair)
+        self.assertIn("bluffing", fair)
+        self.assertNotIn("welcome to write scripts", fair)  # replaced, not contradicted
 
 
 if __name__ == "__main__":
