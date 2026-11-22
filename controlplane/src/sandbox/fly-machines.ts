@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v5-performance-cpu
-const MODULE_REVISION = 'fly-provisioning-v5-performance-cpu';
+// REVISION: fly-provisioning-v6-volume-snapshot
+const MODULE_REVISION = 'fly-provisioning-v6-volume-snapshot';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -182,6 +182,24 @@ export class FlyMachinesClient {
     if (!res.ok) {
       const body = await res.text().catch(() => '(no body)');
       throw new FlyApiError(`Failed to delete volume: ${res.status}`, res.status, body);
+    }
+  }
+
+  /**
+   * Snapshot a volume now (Fly keeps it for the volume's snapshot retention, even
+   * after the volume is deleted). Taken before a dashboard's VM is given up, so its
+   * workspace can be restored if the reaper deletes the volume.
+   */
+  async createVolumeSnapshot(volumeId: string): Promise<void> {
+    const url = `${this.baseUrl}/v1/apps/${this.appName}/volumes/${volumeId}/snapshots`;
+    const res = await this.request('POST', url, undefined, 10_000);
+
+    if (res.status === 404) {
+      throw new FlyVolumeNotFoundError(volumeId);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '(no body)');
+      throw new FlyApiError(`Failed to snapshot volume: ${res.status}`, res.status, body);
     }
   }
 

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v35-gemini-auto-approve
-const sessionsRevision = "sessions-v35-gemini-auto-approve";
+// REVISION: sessions-v36-recover-on-same-vm
+const sessionsRevision = "sessions-v36-recover-on-same-vm";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -359,11 +359,123 @@ export async function mintCurrentSandboxDashboardToken(
  * inserts in ensureDashboardSandboxCreate / provisioning claim a blank row.
  */
 async function retirеDashboardSandbоx(env: EnvWithDriveCache, dashboardId: string): Promise<void> {
+  await snapshotRetiringWorkspace(env, dashboardId);
   await env.DB.prepare(`
     UPDATE dashboard_sandboxes
     SET sandbox_session_id = '', sandbox_machine_id = '', fly_volume_id = '', machine_state = 'unknown'
     WHERE dashboard_id = ?
   `).bind(dashboardId).run();
+}
+
+// REVISION: sessions-v36-recover-on-same-vm
+// Retiring a dashboard's sandbox leaves its workspace volume untracked, and the cron
+// reaper deletes untracked volumes after 15 minutes: everything in /workspace (agent
+// logins, results, the user's files) goes with it. Snapshot the volume first
+// (best-effort) so the workspace can still be restored for the snapshot retention.
+async function snapshotRetiringWorkspace(env: EnvWithDriveCache, dashboardId: string): Promise<void> {
+  if (!flyProvisioningOn(env)) return;
+  const row = await getDashbоardSandbоx(env, dashboardId).catch(() => null);
+  if (!row?.fly_volume_id) return;
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+  try {
+    await fly.createVolumeSnapshot(row.fly_volume_id);
+    console.log(`[retire] Snapshot requested of dashboard ${dashboardId}'s workspace volume ${row.fly_volume_id} (machine ${row.sandbox_machine_id || '-'}) before retiring it`);
+  } catch (err) {
+    console.warn(`[retire] E79788: couldn't snapshot dashboard ${dashboardId}'s workspace volume ${row.fly_volume_id} before retiring it: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+function flyProvisioningOn(env: EnvWithDriveCache): boolean {
+  return env.FLY_PROVISIONING_ENABLED === 'true' && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+}
+
+/**
+ * The sandbox server on a dashboard's VM lost its session (it restarted: an image
+ * update, a crash, out of memory) but the VM and its /workspace volume are fine. Start
+ * a new session on the same machine rather than moving the dashboard to a fresh VM,
+ * which leaves the old volume to the reaper. Concurrent callers (every terminal on
+ * the dashboard opening at once) race on the row: one session wins, the rest are
+ * deleted and their callers use the winner. Returns null when the machine can't take
+ * a session, and the caller reprovisions as before.
+ */
+async function recoverSessionOnSameMachine(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  staleSessionId: string,
+  machineId: string,
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | null> {
+  if (!machineId || !flyProvisioningOn(env)) return null;
+  const row = await env.DB.prepare(`
+    SELECT sandbox_session_id, sandbox_machine_id, created_at FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string; created_at: string | null }>();
+  if (!row || row.sandbox_machine_id !== machineId || !row.created_at) return null;
+  if (row.sandbox_session_id !== staleSessionId) {
+    // Another request already recovered (or replaced) it.
+    return row.sandbox_session_id
+      ? { sandboxSessionId: row.sandbox_session_id, sandboxMachineId: row.sandbox_machine_id }
+      : null;
+  }
+  const generation = sandboxGeneration(row.created_at);
+  if (Number.isNaN(generation)) return null;
+  // Same row, same generation: the VM's dashboard token stays valid for refresh.
+  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env), undefined, generation);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
+  let session: { id: string };
+  try {
+    session = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
+  } catch (err) {
+    console.warn(`[recoverSession] E79787: machine ${machineId} couldn't start a new session for dashboard ${dashboardId}, reprovisioning: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+  const claimed = await env.DB.prepare(`
+    UPDATE dashboard_sandboxes SET sandbox_session_id = ?, machine_state = 'started'
+    WHERE dashboard_id = ? AND sandbox_session_id = ? AND sandbox_machine_id = ?
+  `).bind(session.id, dashboardId, staleSessionId, machineId).run();
+  if (claimed.meta.changes === 0) {
+    try { await sandbox.deleteSession(session.id, machineId); } catch { /* best-effort */ }
+    const winner = await getDashbоardSandbоx(env, dashboardId);
+    return winner?.sandbox_session_id
+      ? { sandboxSessionId: winner.sandbox_session_id, sandboxMachineId: winner.sandbox_machine_id || '' }
+      : null;
+  }
+  console.log(`[recoverSession] Dashboard ${dashboardId}: session ${staleSessionId} was gone from machine ${machineId}; started ${session.id} on the same machine (workspace kept)`);
+  return { sandboxSessionId: session.id, sandboxMachineId: machineId };
+}
+
+type SessionCheck = 'ok' | 'gone' | 'unreachable' | 'transient';
+
+/** Is the dashboard's sandbox session still there? (One /ptys call, 5s.) */
+async function checkSandboxSession(env: EnvWithDriveCache, sessionId: string, machineId: string): Promise<SessionCheck> {
+  try {
+    const res = await sandboxFetch(env, `/sessions/${sessionId}/ptys`, {
+      machineId: machineId || undefined,
+      timeoutMs: 5_000,
+      retries: 0,
+    });
+    if (res.ok) return 'ok';
+    if (res.status === 404) return 'gone';
+    if ((res.status === 502 || res.status === 503) && machineId) return 'unreachable';
+    console.warn(`[ensureDashboardSandbox] Session validation returned ${res.status}, returning existing sandbox (may be transient)`);
+    return 'transient';
+  } catch (err) {
+    const isTimeout = err instanceof Error &&
+      (err.name === 'AbortError' || err.message.includes('The operation was aborted'));
+    if (isTimeout) return 'unreachable';
+    // Non-timeout error (e.g. connection reset) — could be transient.
+    console.warn(`[ensureDashboardSandbox] Session validation threw: ${err instanceof Error ? err.message : err}`);
+    return 'transient';
+  }
+}
+
+/** A machine Fly reports started may still be booting its server: wait up to timeoutMs. */
+async function waitForSandboxServer(env: EnvWithDriveCache, machineId: string, timeoutMs: number): Promise<boolean> {
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await sandbox.health(machineId, 4_000)) return true;
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+  return false;
 }
 
 // A blank row (retirеDashboardSandbоx, or the idle-machine cleanup) is free to
@@ -493,17 +605,21 @@ export async function ensureDashbоardSandbоx(
 
   // ── Handle existing sandbox ──────────────────────────────────────
   if (existingSandbox?.sandbox_session_id) {
+    // Fly reports the machine started (or it was started/waited for just now).
+    let machineStarted = false;
     // If provisioning is enabled and we have a machine ID, check machine state
     if (flyProvisioningEnabled && existingSandbox.sandbox_machine_id) {
       const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
       try {
         const machineState = await getMachineStateCached(fly, existingSandbox.sandbox_machine_id);
+        machineStarted = machineState === 'started';
         if (machineState === 'stopped' || machineState === 'suspended') {
           // Wake the stopped machine
           console.log(`[ensureDashboardSandbox] Starting stopped machine ${existingSandbox.sandbox_machine_id} for dashboard ${dashboardId}`);
           await fly.startMachine(existingSandbox.sandbox_machine_id);
           await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 30);
           machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
+          machineStarted = true;
           await env.DB.prepare(`
             UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
           `).bind(dashboardId).run();
@@ -514,6 +630,7 @@ export async function ensureDashbоardSandbоx(
           try {
             await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 90);
             machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
+            machineStarted = true;
             await env.DB.prepare(`
               UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
             `).bind(dashboardId).run();
@@ -552,67 +669,31 @@ export async function ensureDashbоardSandbоx(
     }
 
     // Validate session still exists on sandbox (may be stale after redeploy).
-    // REVISION: session-recovery-v2-reprovision-on-5xx-validation
-    // 404 means missing session state; 502/503 generally means stale machine
-    // routing (Fly-Replay to dead/absent machine). Both should reprovision.
-    try {
-      const checkRes = await sandboxFetch(
-        env,
-        `/sessions/${existingSandbox.sandbox_session_id}/ptys`,
-        {
-          machineId: existingSandbox.sandbox_machine_id || undefined,
-          timeoutMs: 5_000,
-          retries: 0,
-        }
-      );
-
-      if (checkRes.ok) {
-        return {
-          sandboxSessionId: existingSandbox.sandbox_session_id,
-          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
-        };
-      }
-
-      if (checkRes.status === 404) {
-        // Session definitively gone (sandbox process restarted, lost in-memory state)
-        console.log(`[ensureDashboardSandbox] Session ${existingSandbox.sandbox_session_id} not found on sandbox (404), clearing for reprovision`);
-        await retirеDashboardSandbоx(env, dashboardId);
-        // Fall through to create new sandbox below
-      } else if (
-        (checkRes.status === 502 || checkRes.status === 503)
-        && existingSandbox.sandbox_machine_id
-      ) {
-        console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status} for machine ${existingSandbox.sandbox_machine_id}, clearing for reprovision`);
-        await retirеDashboardSandbоx(env, dashboardId);
-        // Fall through to create new sandbox below
-      } else {
-        // Other non-404 responses may be transient; keep existing mapping.
-        console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status}, returning existing sandbox (may be transient)`);
-        return {
-          sandboxSessionId: existingSandbox.sandbox_session_id,
-          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
-        };
-      }
-    } catch (fetchErr) {
-      // Timeout (AbortError) means the sandbox is completely unreachable — the Fly
-      // machine is likely gone (destroyed, replaced by deployment, or Fly proxy PR04).
-      // Waiting longer won't help. Delete the stale record and reprovision.
-      const isTimeout = fetchErr instanceof Error &&
-        (fetchErr.name === 'AbortError' || fetchErr.message.includes('The operation was aborted'));
-      if (isTimeout) {
-        console.warn(`[ensureDashboardSandbox] Session validation timed out — sandbox unreachable, clearing for reprovision`);
-        await retirеDashboardSandbоx(env, dashboardId);
-        // Fall through to create new sandbox below
-      } else {
-        // Non-timeout error (e.g. connection reset) — could be transient.
-        // Return existing info; caller's createPty will retry or fail.
-        console.warn(`[ensureDashboardSandbox] Session validation threw: ${fetchErr instanceof Error ? fetchErr.message : fetchErr}`);
-        return {
-          sandboxSessionId: existingSandbox.sandbox_session_id,
-          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
-        };
+    // REVISION: sessions-v36-recover-on-same-vm
+    // 404: the session is gone but the VM answered (its server restarted) — start a
+    // new session on the same VM, keeping the workspace. 502/503 or a timeout: if Fly
+    // says the machine is started, its server may still be booting, so wait for it
+    // first. Only a VM that still can't take a session is given up for a new one.
+    const machineId = existingSandbox.sandbox_machine_id || '';
+    let check = await checkSandboxSession(env, existingSandbox.sandbox_session_id, machineId);
+    if (check === 'unreachable' && machineStarted) {
+      console.log(`[ensureDashboardSandbox] Machine ${machineId} is started but its sandbox isn't answering; waiting up to 30s before giving it up`);
+      if (await waitForSandboxServer(env, machineId, 30_000)) {
+        check = await checkSandboxSession(env, existingSandbox.sandbox_session_id, machineId);
       }
     }
+    if (check === 'ok' || check === 'transient') {
+      return {
+        sandboxSessionId: existingSandbox.sandbox_session_id,
+        sandboxMachineId: machineId,
+      };
+    }
+    if (check === 'gone') {
+      const recovered = await recoverSessionOnSameMachine(env, dashboardId, existingSandbox.sandbox_session_id, machineId);
+      if (recovered) return recovered;
+    }
+    console.warn(`[ensureDashboardSandbox] Session ${existingSandbox.sandbox_session_id} on machine ${machineId || '-'}: ${check === 'gone' ? 'gone (404)' : 'unreachable'}, clearing for reprovision`);
+    await retirеDashboardSandbоx(env, dashboardId);
   }
 
   // ── Create new sandbox ───────────────────────────────────────────
@@ -1706,13 +1787,21 @@ async function createSessionImpl(
       const isUnreachable = isUnrеachableSandbox(err);
 
       // Stale/unreachable session — clear it and create a fresh sandbox
-      console.log(`[createSession] Sandbox ${isUnreachable ? 'unreachable (timeout)' : 'stale (404)'} for session ${sandboxSessionId}, reprovisioning`);
-      await retirеDashboardSandbоx(env, dashboardId);
-
-      // Create fresh sandbox session (uses Fly provisioning if enabled)
-      const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
-        && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
-      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
+      // REVISION: sessions-v36-recover-on-same-vm
+      // A 404 means the VM answered but lost the session (its server restarted):
+      // start a new session on the same VM so the workspace is kept.
+      const recovered = isUnreachable
+        ? null
+        : await recoverSessionOnSameMachine(env, dashboardId, sandboxSessionId, sandboxMachineId);
+      let freshResult: { sandboxSessionId: string; sandboxMachineId: string };
+      if (recovered) {
+        freshResult = recovered;
+      } else {
+        console.log(`[createSession] Sandbox ${isUnreachable ? 'unreachable (timeout)' : 'stale (404)'} for session ${sandboxSessionId}, reprovisioning`);
+        await retirеDashboardSandbоx(env, dashboardId);
+        // Create fresh sandbox session (uses Fly provisioning if enabled)
+        freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningOn(env), preferredRegion);
+      }
       sandboxSessionId = freshResult.sandboxSessionId;
       sandboxMachineId = freshResult.sandboxMachineId;
 
