@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-screen-v1-render
+# REVISION: pokerbench-screen-v2-gemini-key-dialog
 """What an agent terminal shows right now, from its raw recent output.
 
 A seat's helper asks Orcabot for its own terminal's raw output (/screen: the last 64KB
@@ -26,7 +26,7 @@ import argparse
 import re
 import sys
 
-SCREEN_REVISION = "pokerbench-screen-v1-render"
+SCREEN_REVISION = "pokerbench-screen-v2-gemini-key-dialog"
 
 # Setup screens of Claude Code, Codex and Gemini CLI that wait for the user. While one is
 # on the screen, a pasted prompt would land in it.
@@ -41,6 +41,9 @@ QUESTIONS = (
     # Gemini CLI
     "how would you like to authenticate", "sign in with google", "use gemini api key",
     "existing api key detected", "do you trust this folder", "trust folder",
+    # its key-entry dialog, which "Use Gemini API Key" can open even with GEMINI_API_KEY set:
+    # a prompt pasted there is saved as the key (2026-11-22 game: Gemini never got its prompt)
+    "enter gemini api key", "paste your api key here",
     # any
     "press enter to continue",
 )

@@ -58,5 +58,14 @@ class ScreenTests(unittest.TestCase):
         self.assertIn(waiting_question(render(raw)), ("sign in with google", "use gemini api key"))
 
 
+    def test_gemini_key_entry_dialog_waits(self):
+        # From the 2026-11-22 game: the prompt was pasted into this dialog and saved as the key.
+        raw = ("\x1b[?1049h\x1b[H\u2502 Enter Gemini API Key \u2502\r\n"
+               "\u2502 Please enter your Gemini API key. It will be securely stored in your system \u2502\r\n"
+               "\u2502 \u2502 [BROKERED] GEMINI_API_KEY is securely managed. \u2502 \u2502\r\n"
+               "\u2502 (Press Enter to submit, Esc to cancel, Ctrl+C to clear stored key) \u2502")
+        self.assertEqual(waiting_question(render(raw)), "enter gemini api key")
+        self.assertEqual(waiting_question(render(raw + "\x1b[?1049l")), "")
+
 if __name__ == "__main__":
     unittest.main()
