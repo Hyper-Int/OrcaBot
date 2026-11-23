@@ -512,8 +512,25 @@ Every run records whether isolation was **enforced**: distinct, non-root seat
 users, neither of them the engine's user. The report and the spectator badge show
 it, and `--require-isolation` refuses to start without it.
 
-Where terminals run as root (Fly today, because the PTY pool needs the egress
-pool), isolation is not enforced and results are labelled accordingly.
+Where terminals run as root (Fly today: the PTY pool needs the egress proxy's kernel
+rules, which Fly's kernel rejects), **each agent seat gets its own user anyway**: its
+boot command starts the agent through `seat.sh agent <vendor> -- <command>`, which (as
+root) gives the seat a user `pokerseat-<uid>` (one per seat name, `uids.json`), a private
+home `/workspace/.pokerbench/seats/<seat>` (0700), and starts the helper and the agent as
+that user with umask 077. So no agent can read another's live transcript (its hole cards
+and reasoning), the engine's files or tokens, and the engine binds each seat to its own
+user: isolation shows as enforced. Each start also moves the seat's earlier conversations
+into a root-only archive (`/workspace/.pokerbench/archive`, so an agent never remembers
+an earlier game), syncs the login with the dashboard's shared home (credentials newer-wins
+both ways; other setup copied in once), and closes the shared home and
+`/workspace/pokerbench-results` to other users (every terminal's transcripts; earlier
+games' hand histories). Off with `POKER_SEAT_USERS=off` (then as before: as root).
+
+**Forbidden file reads** ([`readwatch.py`](pokerbench/readwatch.py)): while a game runs,
+the engine's host watches every file open on the VM (Linux fanotify, root, notify-only)
+and records any by a seat's user of another seat's files, the shared home's transcripts,
+earlier results or the engine's files in `read_audit.jsonl`; the report counts them per
+seat and lists them. Off with `POKER_READWATCH=off`.
 
 Red-team result in a pool-like container (engine 2050, seats 2000/2001): reading
 the other seat's token, the engine's private directory, `/proc/<engine>/environ`

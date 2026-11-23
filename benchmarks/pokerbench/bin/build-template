@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v23-helper-retries
+# REVISION: pokerbench-template-v24-seat-users
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -40,20 +40,14 @@ TERMINAL_SETTINGS = {"Gemini CLI": {"autoApproveFlagged": True}}
 # ORCABOT_PTY_ID, so `poker` found no seat after a restart (2026-11-22, Codex never
 # played) or, with several Codex terminals, the first one's seat for all of them.
 AGENT_TERMINALS = (
-    ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
-    ("Codex", "openai", 'exec codex --no-daemon ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
-    ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust --include-directories /tmp/pokerbench'),
+    ("Claude Code", "anthropic", 'claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
+    ("Codex", "openai", 'codex --no-daemon ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
+    ("Gemini CLI", "google", 'gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust --include-directories /tmp/pokerbench'),
     # Antigravity CLI (agy): Gemini CLI's successor for Google AI plans (Gemini CLI stopped
-    # serving them on 2026-06-18). Not in the sandbox image yet: it says how to install it.
-    # MODEL takes its model labels (`agy models`), e.g. "Gemini 4 Argon (Medium)". Its log
-    # goes to a file per terminal, which the helper reads for the model actually used.
-    ("Antigravity CLI", "antigravity",
-     'command -v agy >/dev/null || { echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:";'
-     ' echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin";'
-     ' echo "then restart this terminal."; exec bash; }\n'
-     'mkdir -p "$HOME/.gemini/antigravity-cli/log"\n'
-     'exec agy ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'
-     ' --log-file "$HOME/.gemini/antigravity-cli/log/seat-$ORCABOT_PTY_ID.log"'),
+    # serving them on 2026-06-18). Not in older sandbox images: the launcher says how to
+    # install it. MODEL takes its model labels (`agy models`), e.g. "Gemini 4 Argon
+    # (Medium)". The launcher adds a log file per terminal, which the helper reads.
+    ("Antigravity CLI", "antigravity", 'agy ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
 )
 BOT_TERMINALS = (
     ("Claude Sonnet (API)", {"PLAYER": "api", "PROVIDER": "anthropic", "MODEL": "claude-sonnet-5-5", "EFFORT": ""}),
@@ -130,20 +124,20 @@ SEAT_COMMENTS = {
 }
 
 
-# The helper runs again if it exits: e.g. a terminal (re)started before the engine
-# published a seat script that knows its vendor (2026-11-23: an Antigravity seat started
-# ahead of the engine restart; the old script refused "antigravity" and the seat never
-# appeared). It reads the script afresh each time. REVISION: pokerbench-template-v23-helper-retries
+# An agent seat starts through the seat script's launcher, which gives it its own OS user
+# and private home (so agents can't read each other's transcripts or the engine's files),
+# starts the helper (again if it exits), then the agent as that user. It waits for the
+# engine, which publishes the script and names the seat. REVISION: pokerbench-template-v24-seat-users
 def agent_boot(vendor: str, launch: str) -> str:
     lines = [
         "# ===== PokerBench seat: an agent terminal like any other =====",
         "# Log in here as usual and leave it at its prompt. Linked to the engine terminal, it",
         "# takes a seat (the table shows it ready); at Start it is given the poker prompt.",
+        "# It runs as its own OS user with a private home (see seat.sh agent).",
         "MODEL=                  # blank: the default model",
         'export MODEL PATH="/tmp/pokerbench/bin:$PATH" POKER_CLI=/tmp/pokerbench/bin/poker',
-        "( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done",
-        f"  until bash /tmp/pokerbench/seat.sh helper {vendor}; do sleep 10; done ) >/dev/null 2>&1 &",
-        launch,
+        'until [ -r /tmp/pokerbench/seat.sh ]; do [ -n "${w:-}" ] || echo "Waiting for the PokerBench engine..."; w=1; sleep 3; done',
+        f"exec bash /tmp/pokerbench/seat.sh agent {vendor} -- {launch}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -245,9 +239,12 @@ Answering questions:
   `decisions.jsonl` (`reason` is what each seat said), `hand_results.jsonl`,
   `integrity.jsonl`, and model seats' call logs in `seats/`.
 
-Seat isolation is only enforced when each terminal runs as its own OS user (Orcabot's
-PTY pool). The table page and report say whether it was; without it the cheating
-results are not trustworthy. See benchmarks/pokerbench/DESIGN.md, Isolation.
+Seat isolation: each agent seat runs as its own OS user with a private home (its boot
+command starts the agent through `seat.sh agent`), so agents can't read each other's
+transcripts or the engine's files; bot seats get their own user only in Orcabot's PTY
+pool. The table page and report say whether isolation was enforced, and the report lists
+any forbidden file reads seen during the game. See benchmarks/pokerbench/README.md,
+Isolation.
 """
 
 

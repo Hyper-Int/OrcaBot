@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-host-v2-resume
+# REVISION: pokerbench-host-v3-readwatch
 """The engine terminal's host (``pokerbench host``): keeps the table in step with the
 canvas while the engine runs.
 
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .players import seat_name
 
-HOST_REVISION = "pokerbench-host-v2-resume"
+HOST_REVISION = "pokerbench-host-v3-readwatch"
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -325,5 +325,8 @@ def cmd_host(args) -> int:
                 args.pb or sys.executable.replace("python", "pokerbench"), static, sandbox,
                 say=lambda line: print(line, flush=True), engine_alive=alive)
     print(f"[host] REVISION: {HOST_REVISION} loaded at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}", flush=True)
+    # Seats opening each other's files, earlier transcripts or results (readwatch.py).
+    from . import readwatch
+    readwatch.start(Path(args.run_dir))
     host.run(args.interval)
     return 0

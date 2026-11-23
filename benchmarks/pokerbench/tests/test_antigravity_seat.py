@@ -71,10 +71,9 @@ class AntigravityTests(unittest.TestCase):
                     if isinstance(i.get("content"), str) and i["content"].startswith("{")]
         boots = {c["name"]: c.get("bootCommand", "") for c in contents if "name" in c}
         boot = boots["Antigravity CLI"]
-        self.assertIn("seat.sh helper antigravity", boot)
-        self.assertIn('exec agy ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions', boot)
-        self.assertIn('--log-file "$HOME/.gemini/antigravity-cli/log/seat-$ORCABOT_PTY_ID.log"', boot)
-        self.assertIn("command -v agy", boot)  # not in the image yet: says how to install it
+        # The launcher (seat.sh agent) adds its log file and says how to install agy if missing.
+        self.assertIn('exec bash /tmp/pokerbench/seat.sh agent antigravity -- agy ${MODEL:+--model "$MODEL"} '
+                      '--dangerously-skip-permissions', boot)
 
 
 if __name__ == "__main__":

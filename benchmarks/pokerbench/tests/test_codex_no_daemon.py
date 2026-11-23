@@ -69,9 +69,20 @@ class CodexNoDaemonTests(unittest.TestCase):
         items = json.loads((ROOT / "template.json").read_text())
         boots = [json.loads(i["content"]).get("bootCommand", "") for i in items["items"]
                  if isinstance(i.get("content"), str) and i["content"].startswith("{")]
-        codex = [b for b in boots if "exec codex" in b]
+        codex = [b for b in boots if "-- codex " in b]
         self.assertEqual(len(codex), 1)
-        self.assertIn("exec codex --no-daemon", codex[0])
+        self.assertIn("seat.sh agent openai -- codex --no-daemon", codex[0])
+
+    def test_helper_under_the_launcher(self):
+        # Template v24: the launcher (root, cmdline names the agent command) starts the
+        # helper's retry loop, then becomes the agent.
+        launcher = ["bash", "/tmp/pokerbench/seat.sh", "agent", "openai", "--", "codex", "-m", "x",
+                    "--dangerously-bypass-approvals-and-sandbox"]
+        tree = {700: (12338, launcher), 12338: (621, [NATIVE, "-m", "x"])}
+        self.assertFalse(own_server(tree, 700))
+        tree = {700: (12338, launcher[:6] + ["--no-daemon"] + launcher[6:]),
+                12338: (621, [NATIVE, "--no-daemon", "-m", "x"])}
+        self.assertTrue(own_server(tree, 700))
 
 
 if __name__ == "__main__":

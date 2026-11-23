@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v9-helper-retries
+# REVISION: pokerbench-seat-v10-seat-users
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v9-helper-retries
+REVISION=pokerbench-seat-v10-seat-users
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -241,6 +241,138 @@ for k in ("model","provider","effort","strategy"):
     v=e(k.upper())
     if v: p[k]=v
 print(json.dumps(p))')
+
+# ---- an agent terminal's launcher: its own OS user, private home (as root) -------------------
+# REVISION: pokerbench-seat-v10-seat-users
+#   exec bash /tmp/pokerbench/seat.sh agent <vendor> -- <agent command...>
+# Every Orcabot terminal runs as root and shares one HOME (/workspace/.home), so each agent
+# could read the others' live transcripts (their hole cards and reasoning) and the engine's
+# files. Outside Orcabot's PTY pool (off on Fly), a seat gets its own OS user instead
+# (pokerseat-<uid>, one per seat name, stable across restarts) and a private home
+# (/workspace/.pokerbench/seats/<seat>, 0700): the helper and the agent run as that user
+# with umask 077. The engine binds the seat to that user when it checks in, so the report
+# shows seat isolation enforced. Each start:
+#   - moves the seat's earlier conversations/notes into a root-only archive, so the agent
+#     starts with no memory of earlier games (a series replays the same deals);
+#   - syncs the login with the dashboard's shared home: credentials newer-wins both ways
+#     (a seat that refreshed its token hands it back), other setup state copied in once.
+# Not root, no setpriv, or POKER_SEAT_USERS=off: helper and agent run as this user, as before.
+if [ "$MODE" = agent ]; then
+  VENDOR="${2:-}"
+  shift 2 2>/dev/null || shift $#
+  [ "${1:-}" = "--" ] && shift
+  case "$VENDOR" in anthropic|openai|google|antigravity) ;; *)
+    echo "seat.sh agent: vendor must be anthropic, openai, google or antigravity"; exec bash ;;
+  esac
+  if [ $# -eq 0 ] || ! command -v "$1" >/dev/null 2>&1; then
+    if [ "$VENDOR" = antigravity ]; then
+      echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:"
+      echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin"
+      echo "then restart this terminal."
+    else
+      echo "${1:-the agent} is not installed on this VM."
+    fi
+    exec bash
+  fi
+  SHARED_HOME="$HOME"
+  ROOT="${POKER_SEATS_ROOT:-/workspace/.pokerbench}"
+  CHOWN="${POKER_TEST_CHOWN:-chown}"  # tests (not root) swap these two
+  IS_ROOT=; { [ "$(id -u)" = 0 ] || [ -n "${POKER_TEST_ROOT:-}" ]; } && IS_ROOT=1
+  if [ -z "$IS_ROOT" ] || ! command -v setpriv >/dev/null 2>&1 || [ "${POKER_SEAT_USERS:-on}" = off ]; then
+    echo "[seat] REVISION: $REVISION: no seat user (not root, no setpriv, or POKER_SEAT_USERS=off)" >&2
+    [ "$VENDOR" = antigravity ] && { mkdir -p "$HOME/.gemini/antigravity-cli/log"
+      set -- "$@" --log-file "$HOME/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"; }
+    ( until bash "$PUB/seat.sh" helper "$VENDOR"; do sleep 10; done ) >/dev/null 2>&1 &
+    exec "$@"
+  fi
+
+  # The seat: named after this terminal by the engine (its link), so wait for the engine.
+  SEAT=$(my_seat)
+  if [ -z "$SEAT" ]; then
+    echo "Waiting for the PokerBench engine to seat this terminal (link it to the engine terminal)..."
+    until SEAT=$(my_seat); [ -n "$SEAT" ]; do sleep 3; done
+  fi
+  mkdir -p "$ROOT/seats" "$ROOT/archive" && chmod 711 "$ROOT" "$ROOT/seats" && chmod 700 "$ROOT/archive"
+  # A stable uid per seat name (3000-3999), and a passwd entry (agents look their user up).
+  U=$( (flock 9
+        python3 - "$ROOT/uids.json" "$SEAT" <<'PY'
+import json, os, sys
+path, seat = sys.argv[1], sys.argv[2]
+try:
+    uids = json.load(open(path))
+except (OSError, ValueError):
+    uids = {}
+if seat not in uids:
+    used = set(uids.values())
+    uids[seat] = next(u for u in range(3000, 4000) if u not in used)
+    tmp = path + ".new"
+    with open(tmp, "w") as f:
+        json.dump(uids, f, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+print(uids[seat])
+PY
+        ) 9>"$ROOT/.lock")
+  case "$U" in ''|*[!0-9]*) echo "seat.sh agent: no uid for seat $SEAT"; exec bash ;; esac
+  NAME="pokerseat-$U"
+  H="$ROOT/seats/$SEAT"
+  PASSWD="${POKER_PASSWD_DIR:-/etc}"
+  ( flock 9
+    grep -q "^$NAME:" "$PASSWD/passwd" || echo "$NAME:x:$U:$U:PokerBench seat $SEAT:$H:/bin/bash" >> "$PASSWD/passwd"
+    grep -q "^$NAME:" "$PASSWD/group" || echo "$NAME:x:$U:" >> "$PASSWD/group" ) 9>"$ROOT/.lock"
+  mkdir -p "$H" && $CHOWN "$U:$U" "$H" && chmod 700 "$H"
+
+  # Earlier conversations and notes: into the root-only archive (kept for the record).
+  case "$VENDOR" in
+    anthropic) HIST=".claude/projects .claude/history.jsonl .claude/todos .claude/shell-snapshots .claude/session-env .claude/file-history .claude/paste-cache" ;;
+    openai) HIST=".codex/sessions .codex/history.jsonl .codex/session_index.jsonl .codex/memories_1.sqlite .codex/thread_history_1.sqlite .codex/logs_2.sqlite .codex/state_5.sqlite" ;;
+    google) HIST=".gemini/tmp .gemini/history" ;;
+    antigravity) HIST=".gemini/antigravity-cli/conversations .gemini/antigravity-cli/brain .gemini/antigravity-cli/annotations .gemini/antigravity-cli/implicit .gemini/antigravity-cli/conversation_summaries.db .gemini/antigravity-cli/history.jsonl .gemini/antigravity-cli/jetbox_summaries_proto.pb .gemini/antigravity-cli/log" ;;
+  esac
+  A="$ROOT/archive/$SEAT/$(date -u +%Y%m%dT%H%M%SZ)-${ORCABOT_PTY_ID:-local}"
+  for p in $HIST; do
+    if [ -e "$H/$p" ]; then mkdir -p "$A/$(dirname "$p")" && mv "$H/$p" "$A/$p"; fi
+  done
+
+  # The login. Credentials: newer wins, both ways. Setup state: copied in if the seat lacks it.
+  case "$VENDOR" in
+    anthropic) CREDS=".claude/.credentials.json"; SETUP=".claude.json .claude/settings.json" ;;
+    openai) CREDS=".codex/auth.json"; SETUP=".codex/config.toml .codex/version.json" ;;
+    google) CREDS=".gemini/oauth_creds.json .gemini/google_accounts.json"; SETUP=".gemini/settings.json .gemini/installation_id .gemini/state.json .gemini/trustedFolders.json" ;;
+    antigravity) CREDS=".gemini/antigravity-cli/antigravity-oauth-token"; SETUP=".gemini/antigravity-cli/settings.json .gemini/antigravity-cli/installation_id .gemini/antigravity-cli/cache/onboarding.json .gemini/config/mcp_config.json .gemini/config/config.json" ;;
+  esac
+  for p in $CREDS; do
+    if [ -s "$H/$p" ] && { [ ! -e "$SHARED_HOME/$p" ] || [ "$H/$p" -nt "$SHARED_HOME/$p" ]; }; then
+      mkdir -p "$(dirname "$SHARED_HOME/$p")" && cp "$H/$p" "$SHARED_HOME/$p.pokerbench" \
+        && chmod 600 "$SHARED_HOME/$p.pokerbench" && mv "$SHARED_HOME/$p.pokerbench" "$SHARED_HOME/$p"
+      echo "[seat] seat $SEAT's newer ${p##*/} handed back to the shared login" >&2
+    elif [ -s "$SHARED_HOME/$p" ] && { [ ! -e "$H/$p" ] || [ "$SHARED_HOME/$p" -nt "$H/$p" ]; }; then
+      mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"
+    fi
+  done
+  for p in $SETUP; do
+    [ -e "$H/$p" ] || [ ! -e "$SHARED_HOME/$p" ] || { mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"; }
+  done
+  $CHOWN -R "$U:$U" "$H" && chmod -R go-rwx "$H"
+
+  # Off limits to other OS users: the shared home (every other terminal's transcripts,
+  # earlier games included) and the results (a series replays the same deals: an earlier
+  # game's hand histories show every card). Root terminals and the file sidebar still see them.
+  [ "$SHARED_HOME" != / ] && [ -d "$SHARED_HOME" ] && chmod o-rwx "$SHARED_HOME"
+  RESULTS="${POKER_RESULTS_DIR:-/workspace/pokerbench-results}"
+  [ -d "$RESULTS" ] && chmod o-rwx "$RESULTS"
+
+  if [ "$VENDOR" = antigravity ]; then  # its log, which the helper reads for the model used
+    mkdir -p "$H/.gemini/antigravity-cli/log" && $CHOWN -R "$U:$U" "$H/.gemini"
+    set -- "$@" --log-file "$H/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"
+  fi
+  echo "[seat] REVISION: $REVISION: seat $SEAT runs as $NAME (uid $U), home $H" >&2
+  umask 077
+  ( until setpriv --reuid="$U" --regid="$U" --clear-groups \
+            env HOME="$H" USER="$NAME" LOGNAME="$NAME" bash "$PUB/seat.sh" helper "$VENDOR"; do sleep 10; done
+  ) >/dev/null 2>&1 &
+  exec setpriv --reuid="$U" --regid="$U" --clear-groups env HOME="$H" USER="$NAME" LOGNAME="$NAME" "$@"
+fi
 
 # ---- an agent terminal's helper: in the background, no output on the agent's screen ----------
 if [ "$MODE" = helper ]; then
