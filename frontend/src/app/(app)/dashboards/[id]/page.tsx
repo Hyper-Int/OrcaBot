@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v61-auto-sleep
-console.log(`[dashboard] REVISION: dashboard-v61-auto-sleep loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v62-copy-paste-blocks
+console.log(`[dashboard] REVISION: dashboard-v62-copy-paste-blocks loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -53,6 +53,7 @@ import {
   OutlookCalendarIcon,
 } from "@/components/icons";
 import { toast } from "sonner";
+import { useCanvasClipboard, type ClipboardPayload } from "@/components/canvas/canvasClipboard";
 
 import {
   Button,
@@ -2992,6 +2993,76 @@ export default function DashboardPage() {
     },
     [items, createItemMutation, computePlacement, ensureVisible]
   );
+
+  // Cmd/Ctrl+C / Cmd/Ctrl+V on the canvas: copy the selected blocks, paste them at the
+  // pointer with the links among them (never links to integration blocks: those grant
+  // access). See components/canvas/canvasClipboard.ts. REVISION: dashboard-v62-copy-paste-blocks
+  const pointerClientRef = React.useRef<{ x: number; y: number } | null>(null);
+  React.useEffect(() => {
+    const onMove = (e: PointerEvent) => { pointerClientRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
+  }, []);
+  const itemsRef = React.useRef(items);
+  const edgesFromDataRef = React.useRef(edgesFromData);
+  React.useEffect(() => {
+    itemsRef.current = items;
+    edgesFromDataRef.current = edgesFromData;
+  }, [items, edgesFromData]);
+
+  const pasteBlocks = React.useCallback(
+    async (payload: ClipboardPayload, positions: { x: number; y: number }[]) => {
+      const results = await Promise.allSettled(
+        payload.blocks.map((b, i) =>
+          createItemMutation.mutateAsync({
+            type: b.type,
+            content: b.content,
+            position: positions[i],
+            size: b.size,
+            metadata: b.metadata,
+          })
+        )
+      );
+      const newIds = new Map<string, string>();
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value?.id) newIds.set(payload.blocks[i].key, r.value.id);
+      });
+      const failed = results.length - newIds.size;
+      if (failed > 0) toast.error(`Couldn't paste ${failed} of ${results.length} blocks`);
+      for (const link of payload.links) {
+        const source = newIds.get(link.source);
+        const target = newIds.get(link.target);
+        if (source && target) {
+          createEdgeMutation.mutate({
+            sourceItemId: source,
+            targetItemId: target,
+            sourceHandle: link.sourceHandle,
+            targetHandle: link.targetHandle,
+          });
+        }
+      }
+      if (positions[0] && payload.blocks[0]) ensureVisible(positions[0], payload.blocks[0].size);
+    },
+    [createItemMutation, createEdgeMutation, ensureVisible]
+  );
+
+  useCanvasClipboard({
+    enabled: role !== "viewer",
+    getSelectedIds: () => (reactFlowInstanceRef.current?.getNodes() ?? []).filter((n) => n.selected).map((n) => n.id),
+    getItems: () => itemsRef.current,
+    getEdges: () => edgesFromDataRef.current,
+    isIntegration: (type) => isIntegrationBlockType(type),
+    getPointerPosition: () => {
+      const inst = reactFlowInstanceRef.current;
+      const pt = pointerClientRef.current;
+      const pane = document.querySelector(".react-flow")?.getBoundingClientRect();
+      if (!inst || !pt || !pane) return null;
+      if (pt.x < pane.left || pt.x > pane.right || pt.y < pane.top || pt.y > pane.bottom) return null;
+      return inst.screenToFlowPosition(pt);
+    },
+    paste: pasteBlocks,
+    onCopied: (n) => toast.success(`Copied ${n} block${n === 1 ? "" : "s"}`),
+  });
 
   const handleBrowserOpen = React.useCallback(
     (url: string) => {
