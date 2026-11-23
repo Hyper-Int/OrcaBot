@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v8-antigravity
+# REVISION: pokerbench-seat-v9-helper-retries
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -14,7 +14,7 @@
 #   MODEL=                  # blank: the default model
 #   export MODEL
 #   ( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done
-#     exec bash /tmp/pokerbench/seat.sh helper anthropic ) >/dev/null 2>&1 &
+#     until bash /tmp/pokerbench/seat.sh helper anthropic; do sleep 10; done ) >/dev/null 2>&1 &
 #   exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions
 #
 #   The helper (vendor: anthropic | openai | google | antigravity) checks the seat in once the agent is
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v8-antigravity
+REVISION=pokerbench-seat-v9-helper-retries
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 

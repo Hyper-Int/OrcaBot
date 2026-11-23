@@ -296,7 +296,7 @@ The dashboard:
   MODEL=                  # blank: the default model
   export MODEL PATH="/tmp/pokerbench/bin:$PATH" POKER_CLI=/tmp/pokerbench/bin/poker
   ( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done
-    exec bash /tmp/pokerbench/seat.sh helper anthropic ) >/dev/null 2>&1 &
+    until bash /tmp/pokerbench/seat.sh helper anthropic; do sleep 10; done ) >/dev/null 2>&1 &
   exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions
   ```
 

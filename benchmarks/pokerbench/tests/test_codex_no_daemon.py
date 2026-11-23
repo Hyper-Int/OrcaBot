@@ -43,6 +43,18 @@ class CodexNoDaemonTests(unittest.TestCase):
         self.assertTrue(own_server({12338: (621, [NATIVE, "--no-daemon", "-m", "gpt-6.2-sol",
                                                   "--dangerously-bypass-approvals-and-sandbox"])}, 12338))
 
+    def test_helper_under_the_retry_subshell(self):
+        # Template v23: the helper runs in a retry loop, a subshell of the boot shell (its
+        # cmdline is the boot script), which then execs codex.
+        old_boot = "# seat\n( until bash /tmp/pokerbench/seat.sh helper openai; do sleep 10; done ) &\nexec codex ${MODEL:+-m \"$MODEL\"} --dangerously-bypass-approvals-and-sandbox"
+        tree = {700: (12338, ["/bin/bash", "-c", old_boot]),
+                12338: (621, [NATIVE, "--dangerously-bypass-approvals-and-sandbox"])}
+        self.assertFalse(own_server(tree, 700))
+        new_boot = old_boot.replace("exec codex ", "exec codex --no-daemon ")
+        tree = {700: (12338, ["/bin/bash", "-c", new_boot]),
+                12338: (621, [NATIVE, "--no-daemon", "--dangerously-bypass-approvals-and-sandbox"])}
+        self.assertTrue(own_server(tree, 700))
+
     def test_codex_started_from_a_shell(self):
         tree = {500: (621, ["bash", "-l"]), 501: (500, ["codex", "--model", "x"])}
         self.assertFalse(own_server(tree, 501))
