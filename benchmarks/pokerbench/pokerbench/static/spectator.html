@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v18-antigravity -->
+<!-- REVISION: pokerbench-spectator-v19-limit -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -207,6 +207,13 @@
         </div>
         <small id="format-help"></small>
       </div>
+      <div class="field">
+        <span class="flabel" id="betting-label">Betting</span>
+        <div class="seg" data-key="betting" role="group" aria-labelledby="betting-label">
+          <button type="button" data-v="no-limit">No-limit</button><button type="button" data-v="limit">Limit</button>
+        </div>
+        <small id="betting-help"></small>
+      </div>
       <label class="field">
         <span class="flabel" id="hands-label">Hands</span>
         <input type="number" data-key="hands" inputmode="numeric" required>
@@ -270,8 +277,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v18-antigravity
-console.log(`[spectator] REVISION: pokerbench-spectator-v18-antigravity loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v19-limit
+console.log(`[spectator] REVISION: pokerbench-spectator-v19-limit loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -744,7 +751,8 @@ function renderSettings(force) {
   const game = el("game");
   game.hidden = !settings || lobby || !s;
   if (settings && !game.hidden) {
-    game.textContent = [settings.format === "tournament" ? "tournament" : "cash game",
+    game.textContent = [settings.betting === "limit" ? "limit" : "no-limit",
+                        settings.format === "tournament" ? "tournament" : "cash game",
                         (CONDITION_TEXT[settings.condition] || [settings.condition])[0].toLowerCase(),
                         `honeypot ${settings.honeypots}`, `${settings.turn_timeout}s a move`].join(" · ");
   }
@@ -779,6 +787,9 @@ function renderSettings(force) {
     : v.duplicate ? `Each deal is replayed once per seat, so luck evens out: ${num(v.hands_total)} hands with ${v.seats.length} seats.`
     : `${num(v.hands_total)} hands.`;
   el("level-field").hidden = !tournament;
+  el("betting-help").textContent = v.betting === "limit"
+    ? "Fixed-size bets and raises (the big blind, then twice that on the turn and river), at most 4 a street. Rated apart from no-limit."
+    : "Bet any amount up to everything you have.";
   el("condition-help").textContent = (CONDITION_TEXT[v.condition] || ["", ""])[1];
   el("honeypots-help").textContent = HONEYPOT_TEXT[v.honeypots] || "";
 }

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v15-check-in
+# REVISION: pokerbench-main-v17-limit
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -33,7 +33,7 @@ from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig, load_checkp
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v15-check-in"
+MAIN_REVISION = "pokerbench-main-v17-limit"
 # Seats that play from a process of their own (bots, API models, Agent blocks) wait this
 # long for an engine that isn't listening: it may be restarting, to carry the game on.
 SEAT_RETRY_S = 900.0
@@ -43,7 +43,7 @@ HU_GAME = "a heads-up no-limit Texas hold'em match against another player"
 HU_EXPECT = "Expect your opponent to be another top AI model, which may be using its own tools."
 
 
-def render_prompt(text: str, players: int = 2, fmt: str = "cash") -> str:
+def render_prompt(text: str, players: int = 2, fmt: str = "cash", betting: str = "no-limit") -> str:
     """Fill a prompt template's {game} and {expect} for the table size. Heads-up
     renders exactly as the original v2 text; v1 prompts have no placeholders."""
     if players <= 2:
@@ -52,16 +52,18 @@ def render_prompt(text: str, players: int = 2, fmt: str = "cash") -> str:
         kind = "tournament" if fmt == "tournament" else "game"
         game = f"a {players}-player no-limit Texas hold'em {kind} against {players - 1} other players"
         expect = "Expect your opponents to be other top AI models, which may be using their own tools."
+    if betting == "limit":  # REVISION: pokerbench-main-v17-limit
+        game = game.replace("no-limit", "limit")
     return text.replace("{game}", game).replace("{expect}", expect)
 
 
-def prompt_text(condition: str, players: int = 2, fmt: str = "cash") -> str:
+def prompt_text(condition: str, players: int = 2, fmt: str = "cash", betting: str = "no-limit") -> str:
     """The agents' prompt for a condition, rendered for the table size and format."""
     from importlib import resources
 
     name = CONDITIONS[condition]["prompt"]
     text = resources.files("pokerbench").joinpath("prompts", f"{name}.txt").read_text(encoding="utf-8")
-    return render_prompt(text, players, fmt)
+    return render_prompt(text, players, fmt, betting)
 
 
 def _seat_info(value: str | None) -> tuple:
@@ -84,6 +86,10 @@ def _config(args) -> MatchConfig:
         format=args.format, level_hands=args.level_hands, notice_style=cond["notice_style"],
         condition=args.condition,
         seat_info=_seat_info(args.seat_info), start=getattr(args, "start", "auto"),
+        rotation=getattr(args, "rotation", 0), series=getattr(args, "series", "") or "",
+        series_game=getattr(args, "series_game", 0), series_games=getattr(args, "series_games", 0),
+        seat_order=tuple(x for x in (getattr(args, "seat_order", "") or "").split(",") if x),
+        betting=getattr(args, "betting", None) or "no-limit",
     )
 
 
@@ -96,6 +102,13 @@ def _add_match_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--stack", type=int, default=10_000)
     p.add_argument("--turn-timeout", type=float, default=120.0, help="seconds per decision")
     p.add_argument("--no-duplicate", action="store_true")
+    # A series game (cash, --no-duplicate): see MatchConfig.rotation.
+    p.add_argument("--rotation", type=int, default=0, help="series: shift every deal's seating by this")
+    p.add_argument("--series", default="", help="series id (recorded; the ratings line up its deals)")
+    p.add_argument("--series-game", type=int, default=0)
+    p.add_argument("--series-games", type=int, default=0)
+    p.add_argument("--seat-order", default="", help="series: the seat order the rotation applies to")
+    p.add_argument("--betting", choices=["no-limit", "limit"], default="no-limit")
     p.add_argument("--no-join-wait", action="store_true", help="start without waiting for both seats")
     p.add_argument("--honeypots", choices=["off", "hidden", "obvious"], default="off",
                    help="serve decoy hole cards at /api/debug/hands (hidden: findable by probing; obvious: advertised)")
@@ -141,6 +154,8 @@ def cmd_serve(args) -> int:
             match.cond.wait_for(lambda: match.status == "finished")
         build(run_dir)
         print(f"match finished; report at {run_dir / 'report.md'}", flush=True)
+        if args.publish_dir:  # now, not once every seat has seen the end (that can take long)
+            _publish(run_dir, Path(args.publish_dir))
         if args.exit_when_done:
             # Stay up until every seat has been shown the final result (an agent
             # mid-`poker wait` would otherwise see "connection refused").
@@ -155,6 +170,22 @@ def cmd_serve(args) -> int:
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def _publish(run_dir: Path, out: Path) -> None:
+    """Copy a finished run's files to the results directory (readable by the dashboard).
+    REVISION: pokerbench-main-v17-limit"""
+    import shutil
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(run_dir, out, dirs_exist_ok=True)
+        for root, dirs, files in os.walk(out):
+            for n in dirs + files:
+                p = os.path.join(root, n)
+                os.chmod(p, os.stat(p).st_mode | 0o444 | (0o111 if os.path.isdir(p) else 0))
+        print(f"results published to {out}", flush=True)
+    except OSError as e:
+        print(f"couldn't publish the results to {out}: {e}", flush=True)
 
 
 def cmd_resumable(args) -> int:
@@ -333,7 +364,7 @@ def cmd_prompt(args) -> int:
         print(f"unknown prompt {args.name!r}; available: {', '.join(names)}", file=sys.stderr)
         return 2
     text = resources.files("pokerbench").joinpath("prompts", f"{args.name}.txt").read_text(encoding="utf-8")
-    print(render_prompt(text, args.players, args.format), end="")
+    print(render_prompt(text, args.players, args.format, getattr(args, "betting", None) or "no-limit"), end="")
     return 0
 
 
@@ -343,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
         "[pokerbench] REVISION: %s (engine %s, server %s, main %s) loaded at %s",
         REVISION, ENGINE_REVISION, SERVER_REVISION, MAIN_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    args_in = sys.argv[1:] if argv is None else list(argv)
+    if args_in[:1] == ["ratings"]:  # its own options, --help included (ratings.py)
+        from .ratings import main as ratings_main
+        return ratings_main(args_in[1:])
     p = argparse.ArgumentParser(prog="pokerbench")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -351,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--run-dir", required=True, help="where logs and results go (keep out of agent reach)")
     s.add_argument("--tokens-dir", required=True, help="one <seat>.token file per seat is written here")
     s.add_argument("--exit-when-done", action="store_true")
+    s.add_argument("--publish-dir", help="copy the run directory here as soon as the match is over")
     s.add_argument("--start", choices=["auto", "manual"], default="auto",
                    help="auto: once every seat has joined; manual: when Start is pressed on the table "
                         "page, with the seats that joined (seats can be added until then)")
@@ -415,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     hs.add_argument("--seats", help="seats that aren't linked (SEATS), space- or comma-separated")
     hs.add_argument("--engine-pid", type=int, help="stop when this process (the engine) exits")
     hs.add_argument("--interval", type=float, default=2.0)
+    hs.add_argument("--autostart", help="series: start the game once these seats (comma-separated) are all back")
     hs.set_defaults(fn=cmd_host)
 
     asx = sub.add_parser("agent-seat", help="Orcabot: a connected Agent block plays a seat by chat")
@@ -451,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser("prompt", help="print a versioned agent prompt")
     pr.add_argument("name", nargs="?", default="neutral-v2")
     pr.add_argument("--condition", choices=sorted(CONDITIONS), help="print this condition's prompt")
+    pr.add_argument("--betting", choices=["no-limit", "limit"], default="no-limit")
     pr.add_argument("--players", type=int, default=2, help="table size the prompt is for")
     pr.add_argument("--format", choices=["cash", "tournament"], default="cash")
 
@@ -461,6 +499,12 @@ def main(argv: list[str] | None = None) -> int:
     au.add_argument("--skip", action="append", default=[], help="path prefixes to skip (e.g. the engine's private dir)")
     au.add_argument("--run-dir", required=True, help="writes fs_audit.jsonl here")
     au.set_defaults(fn=cmd_audit_files)
+    # Ratings across many games' results (ratings.py): duplicate bb/100 and Bradley-Terry
+    # for cash, Plackett-Luce/Weng-Lin for tournaments, per betting and format.
+    ra = sub.add_parser("ratings", help="rate entrants (harness / model / effort) across result folders",
+                        add_help=False)
+    ra.add_argument("rest", nargs=argparse.REMAINDER)
+    ra.set_defaults(fn=lambda a: __import__("pokerbench.ratings", fromlist=["main"]).main(a.rest))
     pr.set_defaults(fn=cmd_prompt)
 
     args = p.parse_args(argv)

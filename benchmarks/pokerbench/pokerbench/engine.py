@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v18-antigravity
+# REVISION: pokerbench-engine-v20-limit
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -44,13 +44,13 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Callable
 
-from pokerkit import Automation, Card, Deck, HandHistory, Mode, NoLimitTexasHoldem
+from pokerkit import Automation, Card, Deck, FixedLimitTexasHoldem, HandHistory, Mode, NoLimitTexasHoldem
 
 from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v18-antigravity"
+ENGINE_REVISION = "pokerbench-engine-v20-limit"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -211,6 +211,21 @@ class MatchConfig:
     # absent player doesn't hold up the whole table (0: never).
     sit_out_after: int = 3
     sit_out_timeout: float = 30.0
+    # A series (cash, no replays at the table): consecutive games with the same seed, game k
+    # dealing every hand with the seats rotated by k, so over the series every player plays
+    # every deal from every seat, each exactly once (bridge-style duplicate across games:
+    # an agent never sees a deal twice). seat_order fixes the order the rotation applies to:
+    # the first game's, whatever order the seats join in. REVISION: pokerbench-engine-v20-limit
+    rotation: int = 0
+    series: str = ""
+    series_game: int = 0
+    series_games: int = 0
+    seat_order: tuple = ()
+    # "no-limit", or "limit": fixed-limit hold'em, bets and raises of a fixed size (the small
+    # bet, the big blind, preflop and on the flop; the big bet, twice that, on the turn and
+    # river), at most 4 per street. A separate game: rated separately.
+    # REVISION: pokerbench-engine-v20-limit
+    betting: str = "no-limit"
 
     def __post_init__(self):
         if self.start not in ("auto", "manual"):
@@ -232,6 +247,12 @@ class MatchConfig:
             raise ValueError(f"notice_style must be one of {sorted(HONEYPOT_NOTICES)}")
         if self.sit_out_after < 0 or self.sit_out_timeout <= 0:
             raise ValueError("sit_out_after must be >= 0 and sit_out_timeout > 0")
+        if self.betting not in ("no-limit", "limit"):
+            raise ValueError("betting must be no-limit or limit")
+        if self.rotation < 0:
+            raise ValueError("rotation must be >= 0")
+        if self.series and (self.format != "cash" or self.duplicate):
+            raise ValueError("a series is cash games without replays at the table (duplicate=False)")
 
     @classmethod
     def from_dict(cls, d: dict) -> "MatchConfig":
@@ -240,6 +261,7 @@ class MatchConfig:
         d["seats"] = tuple(d["seats"])
         d["blind_levels"] = tuple(tuple(b) for b in d.get("blind_levels") or DEFAULT_BLIND_LEVELS)
         d["seat_info"] = tuple(tuple(x) for x in d.get("seat_info") or ())
+        d["seat_order"] = tuple(d.get("seat_order") or ())
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -305,19 +327,22 @@ def schedule(cfg: MatchConfig) -> list[HandPlan | None]:
         return [None] * cfg.deals
     if n < 2:
         return []  # a lobby still being seated (start="manual")
+    rot = cfg.rotation % n  # a series game: every deal's seating shifted by its rotation
     if n > 2:
         plans = []
         for deal in range(cfg.deals):
             base = _order(seats, seats[(deal - 1) % n])
             for r in range(n if cfg.duplicate else 1):
-                plans.append(HandPlan(deal, tuple(base[(i + r) % n] for i in range(n)), r > 0, r))
+                plans.append(HandPlan(deal, tuple(base[(i + r + rot) % n] for i in range(n)), r > 0, r + rot))
         return plans
     a, b = cfg.seats
     plans = []
     for deal in range(cfg.deals):
         # Alternate who plays a deal's first half so ordering effects cancel too.
         order = (a, b) if deal % 2 == 0 else (b, a)
-        plans.append(HandPlan(deal, order, False))
+        if rot:
+            order = (order[1], order[0])
+        plans.append(HandPlan(deal, order, False, rot))
         if cfg.duplicate:
             plans.append(HandPlan(deal, (order[1], order[0]), True, 1))
     return plans
@@ -336,7 +361,10 @@ class Hand:
         mode = Mode.TOURNAMENT if cfg.format == "tournament" else Mode.CASH_GAME
         self.n = len(plan.players)
         self.positions = position_names(self.n)
-        self.game = NoLimitTexasHoldem(AUTOMATIONS, True, 0, (sb, bb), bb, mode=mode)
+        if cfg.betting == "limit":  # small bet = big blind, big bet = twice that; 4 bets a street
+            self.game = FixedLimitTexasHoldem(AUTOMATIONS, True, 0, (sb, bb), bb, 2 * bb, mode=mode)
+        else:
+            self.game = NoLimitTexasHoldem(AUTOMATIONS, True, 0, (sb, bb), bb, mode=mode)
         self.state = self.game(tuple(self.start_stacks[s] for s in plan.players), self.n)
         deck = deck_for_deal(cfg.seed, plan.deal, deck_salt)
         self.state.deck_cards = deque(deck)
@@ -506,6 +534,8 @@ class Hand:
             kind = "raise" if "raise" in legal else "bet" if "bet" in legal else None
             if kind is None:
                 raise ActionError("illegal", "You cannot bet or raise now. Call or fold.", legal)
+            if amount is None and self.cfg.betting == "limit":
+                amount = legal[kind]["min"]  # limit: the size is fixed
             if amount is None:
                 raise ActionError("missing_amount", f"Give the total to {kind} to, e.g. `{kind} {legal[kind]['min']}`.", legal)
             lo, hi = legal[kind]["min"], legal[kind]["max"]
@@ -651,7 +681,7 @@ class Match:
         self.reported_info: dict[str, str] = {}
         # What an agent terminal's agent actually ran on, read by its seat helper from the
         # agent's own logs (agentlogs.py): {"models": {name: count}, "unit", "effort",
-        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v18-antigravity
+        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v20-limit
         self.agent_info: dict[str, dict] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
         # What plays in each seat ({"kind": "claude-code", "model": ...}, players.py), chosen
@@ -1069,12 +1099,12 @@ class Match:
         serves them to the table page only."""
         c = self.cfg
         return {
-            "format": c.format, "hands": c.deals, "level_hands": c.level_hands, "condition": c.condition,
+            "format": c.format, "betting": c.betting, "hands": c.deals, "level_hands": c.level_hands, "condition": c.condition,
             "honeypots": c.honeypots,
             "turn_timeout": c.turn_timeout, "seed": c.seed, "duplicate": c.duplicate,
             "hands_total": len(self.plans), "editable": self.status == "waiting_for_players",
             "seats": list(c.seats),
-            "choices": {"format": ["tournament", "cash"], "condition": list(CONDITIONS),
+            "choices": {"format": ["tournament", "cash"], "betting": ["no-limit", "limit"], "condition": list(CONDITIONS),
                         "honeypots": ["off", "hidden", "obvious"]},
             "limits": SETTINGS_LIMITS,
         }
@@ -1089,7 +1119,7 @@ class Match:
             self._check_controller(uid, "change the settings of", "settings_change")
             if not isinstance(changes, dict):
                 raise ActionError("bad_setting", "Settings must be a JSON object.")
-            names = ("format", "hands", "level_hands", "condition", "honeypots", "turn_timeout", "seed")
+            names = ("format", "betting", "hands", "level_hands", "condition", "honeypots", "turn_timeout", "seed")
             unknown = sorted(set(changes) - set(names))
             if unknown:
                 raise ActionError("bad_setting", f"Unknown setting: {', '.join(unknown)}.")
@@ -1103,6 +1133,8 @@ class Match:
                     raise ActionError("bad_setting", f"{key} must be from {lo} to {hi:,}.")
             if want["format"] not in ("cash", "tournament"):
                 raise ActionError("bad_setting", "format must be tournament or cash.")
+            if want["betting"] not in ("no-limit", "limit"):
+                raise ActionError("bad_setting", "betting must be no-limit or limit.")
             if want["condition"] not in CONDITIONS:
                 raise ActionError("bad_setting", f"condition must be one of {', '.join(CONDITIONS)}.")
             if want["honeypots"] not in ("off", "hidden", "obvious"):
@@ -1110,7 +1142,7 @@ class Match:
             cond = CONDITIONS[want["condition"]]
             tournament = want["format"] == "tournament"
             try:
-                cfg = replace(self.cfg, format=want["format"], deals=int(want["hands"]),
+                cfg = replace(self.cfg, format=want["format"], betting=want["betting"], deals=int(want["hands"]),
                               level_hands=int(want["level_hands"]), condition=want["condition"],
                               notice_style=cond["notice_style"], honeypots=want["honeypots"],
                               turn_timeout=float(want["turn_timeout"]), seed=int(want["seed"]),
@@ -1130,6 +1162,9 @@ class Match:
                 raise ActionError("already_started", "The game has already started.")
             self._check_controller(uid, "start")
             players = tuple(s for s in self.cfg.seats if s in self.joined)
+            if self.cfg.seat_order:  # a series: the first game's order, so rotations line up
+                order = {s: i for i, s in enumerate(self.cfg.seat_order)}
+                players = tuple(sorted(players, key=lambda s: (order.get(s, len(order)), s)))
             if len(players) < 2:
                 raise ActionError("not_enough_players",
                                   f"{len(players)} player{'' if len(players) == 1 else 's'} ready; "
@@ -1394,6 +1429,7 @@ class Match:
                 "hands_total": len(self.plans),
                 "seats": list(self.cfg.seats),
                 "format": self.cfg.format,
+                "betting": self.cfg.betting,
                 "blinds": list(self.hand.blinds) if self.hand else list(self.cfg.blinds_at(max(self.hand_index, 0))[1:]),
                 "starting_stack": self.cfg.starting_stack,
                 "turn_timeout_s": self.cfg.turn_timeout,

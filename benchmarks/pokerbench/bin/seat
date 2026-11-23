@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v10-seat-users
+# REVISION: pokerbench-seat-v11-fresh-agent-each-game
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v10-seat-users
+REVISION=pokerbench-seat-v11-fresh-agent-each-game
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -243,7 +243,7 @@ for k in ("model","provider","effort","strategy"):
 print(json.dumps(p))')
 
 # ---- an agent terminal's launcher: its own OS user, private home (as root) -------------------
-# REVISION: pokerbench-seat-v10-seat-users
+# REVISION: pokerbench-seat-v11-fresh-agent-each-game
 #   exec bash /tmp/pokerbench/seat.sh agent <vendor> -- <agent command...>
 # Every Orcabot terminal runs as root and shares one HOME (/workspace/.home), so each agent
 # could read the others' live transcripts (their hole cards and reasoning) and the engine's
@@ -329,10 +329,13 @@ PY
     google) HIST=".gemini/tmp .gemini/history" ;;
     antigravity) HIST=".gemini/antigravity-cli/conversations .gemini/antigravity-cli/brain .gemini/antigravity-cli/annotations .gemini/antigravity-cli/implicit .gemini/antigravity-cli/conversation_summaries.db .gemini/antigravity-cli/history.jsonl .gemini/antigravity-cli/jetbox_summaries_proto.pb .gemini/antigravity-cli/log" ;;
   esac
-  A="$ROOT/archive/$SEAT/$(date -u +%Y%m%dT%H%M%SZ)-${ORCABOT_PTY_ID:-local}"
-  for p in $HIST; do
-    if [ -e "$H/$p" ]; then mkdir -p "$A/$(dirname "$p")" && mv "$H/$p" "$A/$p"; fi
-  done
+  archive() {
+    local A p
+    A="$ROOT/archive/$SEAT/$(date -u +%Y%m%dT%H%M%SZ)-${ORCABOT_PTY_ID:-local}"
+    for p in $HIST; do
+      if [ -e "$H/$p" ]; then mkdir -p "$A/$(dirname "$p")" && mv "$H/$p" "$A/$p"; fi
+    done
+  }
 
   # The login. Credentials: newer wins, both ways. Setup state: copied in if the seat lacks it.
   case "$VENDOR" in
@@ -341,19 +344,23 @@ PY
     google) CREDS=".gemini/oauth_creds.json .gemini/google_accounts.json"; SETUP=".gemini/settings.json .gemini/installation_id .gemini/state.json .gemini/trustedFolders.json" ;;
     antigravity) CREDS=".gemini/antigravity-cli/antigravity-oauth-token"; SETUP=".gemini/antigravity-cli/settings.json .gemini/antigravity-cli/installation_id .gemini/antigravity-cli/cache/onboarding.json .gemini/config/mcp_config.json .gemini/config/config.json" ;;
   esac
-  for p in $CREDS; do
-    if [ -s "$H/$p" ] && { [ ! -e "$SHARED_HOME/$p" ] || [ "$H/$p" -nt "$SHARED_HOME/$p" ]; }; then
-      mkdir -p "$(dirname "$SHARED_HOME/$p")" && cp "$H/$p" "$SHARED_HOME/$p.pokerbench" \
-        && chmod 600 "$SHARED_HOME/$p.pokerbench" && mv "$SHARED_HOME/$p.pokerbench" "$SHARED_HOME/$p"
-      echo "[seat] seat $SEAT's newer ${p##*/} handed back to the shared login" >&2
-    elif [ -s "$SHARED_HOME/$p" ] && { [ ! -e "$H/$p" ] || [ "$SHARED_HOME/$p" -nt "$H/$p" ]; }; then
-      mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"
-    fi
-  done
-  for p in $SETUP; do
-    [ -e "$H/$p" ] || [ ! -e "$SHARED_HOME/$p" ] || { mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"; }
-  done
-  $CHOWN -R "$U:$U" "$H" && chmod -R go-rwx "$H"
+  sync_login() {
+    local p
+    for p in $CREDS; do
+      if [ -s "$H/$p" ] && { [ ! -e "$SHARED_HOME/$p" ] || [ "$H/$p" -nt "$SHARED_HOME/$p" ]; }; then
+        mkdir -p "$(dirname "$SHARED_HOME/$p")" && cp "$H/$p" "$SHARED_HOME/$p.pokerbench" \
+          && chmod 600 "$SHARED_HOME/$p.pokerbench" && mv "$SHARED_HOME/$p.pokerbench" "$SHARED_HOME/$p"
+        echo "[seat] seat $SEAT's newer ${p##*/} handed back to the shared login" >&2
+      elif [ -s "$SHARED_HOME/$p" ] && { [ ! -e "$H/$p" ] || [ "$SHARED_HOME/$p" -nt "$H/$p" ]; }; then
+        mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"
+      fi
+    done
+    for p in $SETUP; do
+      [ -e "$H/$p" ] || [ ! -e "$SHARED_HOME/$p" ] || { mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"; }
+    done
+    if [ "$VENDOR" = antigravity ]; then mkdir -p "$H/.gemini/antigravity-cli/log"; fi
+    $CHOWN -R "$U:$U" "$H" && chmod -R go-rwx "$H"
+  }
 
   # Off limits to other OS users: the shared home (every other terminal's transcripts,
   # earlier games included) and the results (a series replays the same deals: an earlier
@@ -362,23 +369,58 @@ PY
   RESULTS="${POKER_RESULTS_DIR:-/workspace/pokerbench-results}"
   [ -d "$RESULTS" ] && chmod o-rwx "$RESULTS"
 
-  if [ "$VENDOR" = antigravity ]; then  # its log, which the helper reads for the model used
-    mkdir -p "$H/.gemini/antigravity-cli/log" && $CHOWN -R "$U:$U" "$H/.gemini"
-    set -- "$@" --log-file "$H/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"
-  fi
+  # Its log, which the helper reads for the model used.
+  [ "$VENDOR" = antigravity ] && set -- "$@" --log-file "$H/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"
   echo "[seat] REVISION: $REVISION: seat $SEAT runs as $NAME (uid $U), home $H" >&2
   umask 077
+  archive; sync_login
   ( until setpriv --reuid="$U" --regid="$U" --clear-groups \
             env HOME="$H" USER="$NAME" LOGNAME="$NAME" bash "$PUB/seat.sh" helper "$VENDOR"; do sleep 10; done
   ) >/dev/null 2>&1 &
-  exec setpriv --reuid="$U" --regid="$U" --clear-groups env HOME="$H" USER="$NAME" LOGNAME="$NAME" "$@"
+
+  # The agent, in the foreground, as the seat's user. This stays its parent: when it exits
+  # (its helper ends it when a new game begins, so every game starts with a fresh agent and
+  # nothing of the last one on disk), its conversation is archived, the login synced, and a
+  # fresh one started. One that keeps exiting at once leaves a shell instead.
+  # REVISION: pokerbench-seat-v11-fresh-agent-each-game
+  trap ':' INT
+  quick=0
+  while :; do
+    started=$(date +%s)
+    setpriv --reuid="$U" --regid="$U" --clear-groups env HOME="$H" USER="$NAME" LOGNAME="$NAME" "$@"
+    if [ $(( $(date +%s) - started )) -lt 10 ]; then quick=$((quick + 1)); else quick=0; fi
+    if [ "$quick" -ge 3 ] || [ -n "${POKER_TEST_ONCE:-}" ]; then
+      [ -n "${POKER_TEST_ONCE:-}" ] && exit 0
+      echo "The agent keeps exiting at once. A shell (restart this terminal to try again):"; exec bash
+    fi
+    echo; echo "Starting a fresh agent for seat $SEAT (its last conversation is archived)..."
+    archive; sync_login; sleep 1
+  done
 fi
+
+# The agent's launcher (seat.sh agent) is this helper's grandparent (the helper runs in its
+# retry loop); the agent is the launcher's other child. Ending it makes the launcher start a
+# fresh one. False without a launcher (an older boot command): nothing is ended.
+restart_agent() {
+  local loop launcher p agent= i
+  loop=${POKER_TEST_PPID:-$PPID}
+  launcher=$(awk '{print $4}' "/proc/$loop/stat" 2>/dev/null)
+  [ -n "$launcher" ] && tr '\0' ' ' < "/proc/$launcher/cmdline" 2>/dev/null | grep -q 'seat.sh agent ' || return 1
+  for p in /proc/[0-9]*; do
+    [ "${p#/proc/}" = "$loop" ] && continue
+    [ "$(awk '{print $4}' "$p/stat" 2>/dev/null)" = "$launcher" ] && { agent=${p#/proc/}; break; }
+  done
+  [ -n "$agent" ] || return 1
+  kill -TERM "$agent" 2>/dev/null || return 1
+  for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$agent" 2>/dev/null || return 0; sleep 1; done
+  kill -KILL "$agent" 2>/dev/null; return 0
+}
 
 # ---- an agent terminal's helper: in the background, no output on the agent's screen ----------
 if [ "$MODE" = helper ]; then
   exec >>"${TMPDIR:-/tmp}/pokerbench-seat-$(id -u)-${ORCABOT_PTY_ID:-local}.log" 2>&1
   echo "[seat] REVISION: $REVISION helper ($PLAYER) loaded at $(date -u +%FT%TZ)"
-  ready_at=; ready_game=; given=; given_any=; recheck_at=0
+  ready_at=; ready_game=; given=; given_any=; recheck_at=0; fresh_for=
   while :; do
     until engine_up; do sleep 3; done
     SEAT=$(my_seat)
@@ -402,6 +444,15 @@ if [ "$MODE" = helper ]; then
       fi
       [ "$given" = "$POKER_GAME" ] && report_agent
       sleep 2; continue
+    fi
+    # A new game after this agent played one: a fresh agent (the launcher archives the last
+    # conversation and starts it again), so it remembers nothing of earlier deals. Without
+    # the launcher, its conversation is cleared at Start instead.
+    if [ -n "$given_any" ] && [ "$given" != "$POKER_GAME" ] && [ "$fresh_for" != "$POKER_GAME" ]; then
+      fresh_for=$POKER_GAME
+      if restart_agent; then
+        echo "$(date -u +%T) game $POKER_GAME: started a fresh agent"; given_any=; ready_at=; sleep 8; continue
+      fi
     fi
     # Ready for this game: just watch for Start (cheap), and check again every 20s.
     if [ "$ready_at" = "$POKER_GAME:$SEAT" ] && [ "$(date +%s)" -lt "$recheck_at" ]; then sleep 2; continue; fi

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v12-file-reads
+# REVISION: pokerbench-report-v14-limit
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v12-file-reads"
+REPORT_REVISION = "pokerbench-report-v14-limit"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -400,10 +400,13 @@ def render_md(rep: dict) -> str:
     lines = [
         "# PokerBench report", "",
         f"- Seats: {', '.join(cfg['seats'])}",
-        f"- Condition: {cfg.get('condition', 'neutral')}; honeypots {cfg['honeypots']}",
+        f"- Betting: {cfg.get('betting', 'no-limit')}. Condition: {cfg.get('condition', 'neutral')}; honeypots {cfg['honeypots']}",
         f"- Hands played: {rep['hands_played']} of {rep['run']['hands_total']}"
         f" ({cfg['deals']} deals{', duplicate' if cfg['duplicate'] else ''}), seed {cfg['seed']}",
         fmt,
+        *([f"- Series `{cfg['series']}`: game {cfg.get('series_game', 0) + 1} of {cfg.get('series_games') or '?'}, "
+           f"seed {cfg['seed']}, every deal seated with rotation {cfg.get('rotation', 0)} "
+           "(each player plays each deal from each seat once across the series)"] if cfg.get("series") else []),
         f"- Started {rep['run']['started_at']}, finished {rep['run']['finished_at'] or '(not finished)'}"
         + (" (ended early from the table page)" if rep["run"].get("finish_reason") == "ended" else ""),
         *([f"- The engine terminal restarted {rep['run']['resumes']} time(s) and the game carried on; each "

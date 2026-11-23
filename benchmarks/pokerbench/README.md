@@ -150,6 +150,17 @@ and the push/fold rate under 10 bb.
 - **Cash duplicate** replays each deal once per seat with the seats rotated, so
   every seat holds every hand from every position. Calling stations break even
   exactly (tested).
+- **A series** (`SERIES=N` in the engine terminal, cash only) is duplicate across games
+  instead of at one table: N games in a row with the same seed and no replays at the
+  table, game k dealing every hand with the seats rotated by k, so each player plays every
+  deal from every seat once and never sees a deal twice (an agent with a memory could
+  recognise a replay). Game 1 starts with Start and its Settings; each later game reuses
+  game 1's settings, seed and seat order and starts by itself once every seat is back.
+  Between games every agent seat gets a fresh agent: its helper ends the agent, and the
+  seat's launcher archives the last conversation, syncs the login and starts a new one.
+  Results are tagged with the series (`run.json` config `series`, `series_game`,
+  `rotation`) so the ratings line up each deal across the games. The engine terminal
+  restarting mid-series carries on (`$PRIV/series.json`).
 - **Tournaments** eliminate players at zero chips. Places go by elimination
   order; two busting in one hand are ranked by their starting stacks. The button
   skips eliminated seats. An eliminated seat's `poker wait` says it's out.
@@ -269,11 +280,13 @@ The dashboard:
 
   ```
   FORMAT=tournament     # tournament | cash
+  BETTING=no-limit      # no-limit | limit (fixed-limit hold'em: rated separately)
   HANDS=100             # tournament: hand limit. cash: deals, each replayed once per seat
   LEVEL_HANDS=10        # tournament: the blinds go up every LEVEL_HANDS hands
   CONDITION=neutral     # neutral | pressure | ambiguous | permitted | prohibited | fair
   HONEYPOTS=obvious     # off | hidden | obvious
-  SEED=0
+  SEED=random           # random: a new seed each game | a number: replay the same deals
+  SERIES=1              # 1: one game | N (cash): N games, same seed, seats rotated a place each game
   TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
   START=manual          # manual: press Start on the table page | auto: when every seat is ready
   REF=main              # branch or tag to install
@@ -496,6 +509,25 @@ The suite covers:
   spectator view never contains any live hole cards;
 - HTTP auth and the request log (tokens never reach any file);
 - a full bot match over HTTP, and CLI rendering.
+
+## Ratings
+
+`pokerbench ratings <result folders...>` ([`ratings.py`](pokerbench/ratings.py)) rates
+**entrants** (harness / model / effort, e.g. `codex / gpt-6.2-astra / medium`; not seat
+names, which are just terminal names) across many games, separately for each variant
+(no-limit or limit, cash or tournament):
+
+- **Cash:** bb/100 with a 95% bootstrap CI. Duplicate deals (a series, or replays at the
+  table) are resampled as one unit each, so card luck mostly cancels. Plus a
+  **Bradley–Terry** rating (Elo-like scale, 1500 = the prior's reference) fitted over every
+  pairwise comparison at once, so the order games were played in doesn't matter.
+- **Tournaments:** a Plackett–Luce (Weng–Lin, OpenSkill-style) rating from finishing
+  orders: mu, sigma and ordinal = mu − 3σ. Single tournaments are noisy: sigma shows it.
+
+`--overrides file.json` maps `game/seat` to an entrant name (to merge one model recorded
+two ways) or to `null` (to leave out a seat that never really played). `--out` writes the
+markdown, `--json` the data. Models come from `run.json` (`agent_info`, reported by the
+seats) or an `agent_info_recovered.json` next to it.
 
 ## Isolation
 

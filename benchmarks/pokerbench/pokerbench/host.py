@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-host-v3-readwatch
+# REVISION: pokerbench-host-v5-limit
 """The engine terminal's host (``pokerbench host``): keeps the table in step with the
 canvas while the engine runs.
 
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .players import seat_name
 
-HOST_REVISION = "pokerbench-host-v3-readwatch"
+HOST_REVISION = "pokerbench-host-v5-limit"
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -93,7 +93,8 @@ def linked_seats(links: list[dict], agents: list[dict], static: tuple[str, ...] 
 
 class Host:
     def __init__(self, engine: Engine, pub: Path, tokens_dir: Path, run_dir: Path, game: str, pb: str,
-                 static_seats: tuple[str, ...] = (), sandbox=None, say=print, engine_alive=lambda: True):
+                 static_seats: tuple[str, ...] = (), sandbox=None, say=print, engine_alive=lambda: True,
+                 autostart: tuple[str, ...] = ()):
         self.engine, self.pub, self.tokens_dir, self.run_dir = engine, Path(pub), Path(tokens_dir), Path(run_dir)
         self.game, self.pb, self.static = game, pb, tuple(static_seats)
         self.sandbox = sandbox  # agentlink.AgentLinkClient, or None outside Orcabot
@@ -106,6 +107,8 @@ class Host:
         self.started = False
         self.shown: dict[str, str] = {}
         self.env_seats: list[str] | None = None
+        # A later game of a series: start it once these seats (the series') are all back.
+        self.autostart, self.autostarted = tuple(autostart), False
 
     # -- what is linked ------------------------------------------------------------------
     def poll_links(self) -> None:
@@ -255,7 +258,8 @@ class Host:
         seats = list(st.get("seats") or [])
         settings = self.engine.call("GET", "/api/table/settings")
         condition, fmt = settings.get("condition", "neutral"), settings.get("format", st.get("format", "cash"))
-        _write_atomic(self.pub / "prompt.txt", prompt_text(condition, max(2, len(seats)), fmt))
+        _write_atomic(self.pub / "prompt.txt", prompt_text(condition, max(2, len(seats)), fmt,
+                                                           settings.get("betting", "no-limit")))
         self.started = True
         self.write_env(seats, started=True)
         for seat in list(self.agent_procs):
@@ -273,6 +277,12 @@ class Host:
                      f"{settings['honeypots']}, {settings['turn_timeout']:g}s per decision, seed {settings['seed']}")
 
     # -- the loop -----------------------------------------------------------------------------
+    def autostart_ready(self, st: dict) -> bool:
+        """A later game of a series starts by itself once every seat of the series is back
+        (the table page shows who it's waiting for until then)."""
+        want = set(self.autostart)
+        return bool(want) and want <= set(st.get("joined") or []) and want <= set(st.get("seats") or [])
+
     def step(self) -> bool:
         """One pass. False once the engine is gone."""
         st = self.engine.spectate()
@@ -284,6 +294,10 @@ class Host:
             st = self.engine.spectate() or st
             self.publish(st)
             self.report(st)
+            if self.autostart and self.autostart_ready(st) and not self.autostarted:
+                r = self.engine.call("POST", "/api/table/start", {})
+                self.autostarted = not r.get("error")
+                self.say(f"== Series: every seat is back, started game {self.game} ({r.get('message') or 'ok'})")
         else:
             if not self.started:
                 self.on_start(st)
@@ -323,7 +337,8 @@ def cmd_host(args) -> int:
     static = tuple(s for s in (args.seats or "").replace(",", " ").split() if s)
     host = Host(Engine(args.url, control), Path(args.pub), Path(args.tokens_dir), Path(args.run_dir), args.game,
                 args.pb or sys.executable.replace("python", "pokerbench"), static, sandbox,
-                say=lambda line: print(line, flush=True), engine_alive=alive)
+                say=lambda line: print(line, flush=True), engine_alive=alive,
+                autostart=tuple(s for s in (args.autostart or "").split(",") if s))
     print(f"[host] REVISION: {HOST_REVISION} loaded at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}", flush=True)
     # Seats opening each other's files, earlier transcripts or results (readwatch.py).
     from . import readwatch

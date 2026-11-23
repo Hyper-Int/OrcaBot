@@ -43,7 +43,7 @@ class SeatUserTests(unittest.TestCase):
     def launch(self, vendor, *argv, pty="pty-1"):
         env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.shared), "POKER_PUB": str(self.pub),
                "POKER_SEATS_ROOT": str(self.root), "POKER_PASSWD_DIR": str(self.etc), "POKER_TEST_ROOT": "1",
-               "POKER_TEST_CHOWN": "true", "ORCABOT_PTY_ID": pty}
+               "POKER_TEST_CHOWN": "true", "POKER_TEST_ONCE": "1", "ORCABOT_PTY_ID": pty}
         r = subprocess.run(["bash", str(ROOT / "bin" / "seat"), "agent", vendor, "--", *argv],
                            env=env, capture_output=True, text=True, timeout=30)
         time.sleep(0.3)  # the helper loop runs in the background

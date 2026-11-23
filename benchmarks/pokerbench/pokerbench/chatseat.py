@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v6-present-check-in
+# REVISION: pokerbench-chatseat-v7-limit
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
@@ -40,7 +40,7 @@ from collections.abc import Iterator
 
 from .llm import ACTIONS, Decision, NoReply, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v6-present-check-in"
+CHATSEAT_REVISION = "pokerbench-chatseat-v7-limit"
 
 INTRO = """\
 [PokerBench] Your owner has seated you at a poker table. This is a LIVE, TIMED game: \
@@ -108,8 +108,9 @@ def intro_system(view: dict, timeout: float) -> str:
     from .cli import rules_text
 
     n = len(view["match"]["seats"])
-    table = ("a heads-up no-limit Texas hold'em match against one opponent" if n == 2 else
-             f"a {n}-player no-limit Texas hold'em "
+    betting = "limit" if view["match"].get("betting") == "limit" else "no-limit"
+    table = (f"a heads-up {betting} Texas hold'em match against one opponent" if n == 2 else
+             f"a {n}-player {betting} Texas hold'em "
              f"{'tournament' if view['match'].get('format') == 'tournament' else 'game'} against {n - 1} opponents")
     return INTRO.format(table=table, rules=rules_text(view["match"], for_cli=False), timeout=int(timeout),
                         others=n - 1)

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v12-present
+# REVISION: pokerbench-cli-v13-limit
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v12-present"
+CLI_REVISION = "pokerbench-cli-v13-limit"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -47,7 +47,7 @@ DEFAULT_WAIT_S = 100.0
 RETRY_EVERY_S = 3.0
 
 RULES = """\
-PokerBench -- heads-up no-limit Texas hold'em, you against one opponent.
+PokerBench -- heads-up {betting} Texas hold'em, you against one opponent.
 
 - Blinds {sb}/{bb}. Every hand starts with {stack} chips each (stacks reset), so
   each hand is independent. Your score is your total chips won or lost.
@@ -66,7 +66,7 @@ Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 """
 
 TOURNAMENT_RULES = """\
-PokerBench -- a heads-up no-limit Texas hold'em TOURNAMENT, you against one opponent.
+PokerBench -- a heads-up {betting} Texas hold'em TOURNAMENT, you against one opponent.
 
 - You each start with {stack} chips. Stacks carry over from hand to hand.
 - The tournament ends when one player has all the chips, or after {limit} hands;
@@ -95,7 +95,7 @@ RING_ORDER = """\
   hijack, cutoff, button (last to act after the flop)."""
 
 RING_CASH = """\
-PokerBench -- {n}-player no-limit Texas hold'em, you against {others} opponents.
+PokerBench -- {n}-player {betting} Texas hold'em, you against {others} opponents.
 
 - Blinds {sb}/{bb}. Every hand starts with {stack} chips each (stacks reset), so
   each hand is independent. Your score is your total chips won or lost.
@@ -114,7 +114,7 @@ Loop: `poker wait` -> decide -> `poker act <action> [amount] "<why>"`
 """
 
 RING_TOURNAMENT = """\
-PokerBench -- a {n}-player no-limit Texas hold'em TOURNAMENT, you against {others} opponents.
+PokerBench -- a {n}-player {betting} Texas hold'em TOURNAMENT, you against {others} opponents.
 
 - You each start with {stack} chips. Stacks carry over from hand to hand. A
   player with no chips left is eliminated; places are decided by the order of
@@ -143,10 +143,20 @@ SIT_OUT = """\
   answer promptly."""
 
 
+LIMIT_RULE = """\
+- LIMIT betting: bets and raises are a fixed size, the small bet (the big blind)
+  preflop and on the flop, the big bet (twice the big blind) on the turn and
+  river; at most 4 bets and raises per street. `poker act raise` (or bet) needs
+  no amount."""
+
+
 def rules_text(m: dict, for_cli: bool = True) -> str:
     """The rules for this match. for_cli=False drops the `poker` command loop
     (direct model seats answer one decision at a time, with no shell)."""
     text = _rules_text(m)
+    if m.get("betting") == "limit":  # REVISION: pokerbench-cli-v13-limit
+        line = "is free, otherwise you fold.\n"
+        text = text.replace(line, line + LIMIT_RULE + "\n", 1)
     if m.get("sit_out_after"):
         line = "is free, otherwise you fold.\n"
         text = text.replace(line, line + SIT_OUT.format(n=m["sit_out_after"], t=m.get("sit_out_timeout_s", 30)) + "\n", 1)
@@ -159,23 +169,27 @@ def _rules_text(m: dict) -> str:
     if n > 2:
         order = RING_ORDER.format(seats=", ".join(m["seats"]))
         if not t:
-            return RING_CASH.format(n=n, others=n - 1, sb=m["blinds"][0], bb=m["blinds"][1],
+            return RING_CASH.format(betting=_betting(m), n=n, others=n - 1, sb=m["blinds"][0], bb=m["blinds"][1],
                                     stack=m["starting_stack"], order=order, timeout=m["turn_timeout_s"])
         k, limit = t["level_hands"], t["hand_limit"]
         levels = "\n".join(f"    Level {i + 1:>2} (hands {i * k + 1}-{min((i + 1) * k, limit)}): {sb}/{bb}"
                            for i, (sb, bb) in enumerate(t["blind_levels"]))
-        return RING_TOURNAMENT.format(n=n, others=n - 1, stack=m["starting_stack"], limit=limit, level_hands=k,
+        return RING_TOURNAMENT.format(betting=_betting(m), n=n, others=n - 1, stack=m["starting_stack"], limit=limit, level_hands=k,
                                       levels=levels, order=order, timeout=m["turn_timeout_s"])
     if not t:
-        return RULES.format(sb=m["blinds"][0], bb=m["blinds"][1], stack=m["starting_stack"],
+        return RULES.format(betting=_betting(m), sb=m["blinds"][0], bb=m["blinds"][1], stack=m["starting_stack"],
                             timeout=m["turn_timeout_s"])
     n, limit = t["level_hands"], t["hand_limit"]
     levels = "\n".join(
         f"    Level {i + 1:>2} (hands {i * n + 1}-{min((i + 1) * n, limit)}): {sb}/{bb}"
         for i, (sb, bb) in enumerate(t["blind_levels"])
     )
-    return TOURNAMENT_RULES.format(stack=m["starting_stack"], limit=limit, level_hands=n, levels=levels,
+    return TOURNAMENT_RULES.format(betting=_betting(m), stack=m["starting_stack"], limit=limit, level_hands=n, levels=levels,
                                    timeout=m["turn_timeout_s"])
+
+
+def _betting(m: dict) -> str:
+    return "limit" if m.get("betting") == "limit" else "no-limit"
 
 
 def _bb(chips: int, bb: int) -> str:

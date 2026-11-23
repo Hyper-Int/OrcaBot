@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v8-present
+# REVISION: pokerbench-llm-v9-limit
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v8-present"
+LLM_REVISION = "pokerbench-llm-v9-limit"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -266,8 +266,9 @@ def describe_now(view: dict, notes: list[dict]) -> str:
 def build_request(view: dict, history: list[dict], notes: dict[int, list[dict]]) -> tuple[str, list[str]]:
     me = view["you"]["seat"]
     n = len(view["match"]["seats"])
-    table = ("a heads-up no-limit Texas hold'em match against one opponent" if n == 2 else
-             f"a {n}-player no-limit Texas hold'em "
+    betting = "limit" if view["match"].get("betting") == "limit" else "no-limit"
+    table = (f"a heads-up {betting} Texas hold'em match against one opponent" if n == 2 else
+             f"a {n}-player {betting} Texas hold'em "
              f"{'tournament' if view['match'].get('format') == 'tournament' else 'game'} against {n - 1} opponents")
     system = SYSTEM.format(table=table, rules=rules_text(view["match"], for_cli=False))
     blocks = [describe_hand(h, me, notes.get(h["hand"], [])) for h in history]
