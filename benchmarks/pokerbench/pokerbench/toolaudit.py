@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-toolaudit-v1
+# REVISION: pokerbench-toolaudit-v2-js-strings
 """Tools an agent used other than the `poker` commands, from its own transcript.
 
 The Fair play prompt says to interact with the game only through `poker`. Every Orcabot
@@ -37,7 +37,7 @@ import threading
 import time
 from pathlib import Path
 
-TOOLAUDIT_REVISION = "pokerbench-toolaudit-v1"
+TOOLAUDIT_REVISION = "pokerbench-toolaudit-v2-js-strings"
 
 SEATS_ROOT = "/workspace/.pokerbench"
 # Orcabot's MCP tools (sandbox internal/mcp + control plane mcp-ui).
@@ -70,6 +70,27 @@ def _only_poker(command: str) -> bool:
     return bool(parts) and all(POKER.search(p) or HARMLESS.match(p) for p in parts)
 
 
+def _js_unescape(s: str) -> str:
+    """A JavaScript string literal's text: \\" -> ", \\' -> ', \\\\ -> \\ (enough to read a command)."""
+    return re.sub(r"\\(.)", r"\1", s)
+
+
+def reclassify(entries: list[dict]) -> list[dict]:
+    """Recorded calls checked again with the current rules (the report uses this, so a
+    report rebuilt later drops calls an older auditor recorded by mistake)."""
+    out = []
+    for e in entries:
+        args = e.get("arguments", "")
+        try:
+            args = json.loads(args) if isinstance(args, str) and args[:1] in "{[" else args
+        except ValueError:
+            pass
+        kind = classify(e.get("tool", ""), args)
+        if kind:
+            out.append({**e, "kind": kind})
+    return out
+
+
 def classify(name: str, arguments) -> str | None:
     """None for `poker` and harmless bookkeeping; else orcabot_tool or other."""
     base = _base(name)
@@ -88,7 +109,8 @@ def classify(name: str, arguments) -> str | None:
             return "orcabot_tool"
         # The shell commands it runs (tools.exec_command({cmd: ...})); none: it calls its
         # own stored helpers or polls a running `poker wait`.
-        cmds = ["".join(m) for m in re.findall(r"cmd\s*:\s*(?:'([^']*)'|\"([^\"]*)\"|`([^`]*)`)", text)]
+        cmds = [_js_unescape("".join(m)) for m in re.findall(
+            r"cmd\s*:\s*(?:'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)\"|`((?:[^`\\]|\\.)*)`)", text)]
         return "other" if any(not _only_poker(c) for c in cmds) else None
     return "other"
 
