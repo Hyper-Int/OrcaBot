@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v5-rejoin
+# REVISION: pokerbench-seat-v6-agent-models
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v5-rejoin
+REVISION=pokerbench-seat-v6-agent-models
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -86,6 +86,22 @@ report() {  # state message: why this seat can't play yet (the table page shows 
   [ "$1:$2" = "$reported" ] && [ "$now" -lt $((reported_at + 30)) ] && return 0
   api POST /api/seat/status "$(python3 -c 'import json,sys; print(json.dumps({"state":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2")" >/dev/null
   reported="$1:$2"; reported_at=$now
+}
+
+# Which model(s) the agent used in this game so far, from its own logs (seat_agentlogs.py,
+# published by the engine): checked every 60s once it has its prompt, sent when it changed.
+# Counted from the table's creation (the game id), so a rejoined agent's earlier turns count.
+agent_reported=; agent_at=0
+report_agent() {
+  local now since info; now=$(date +%s)
+  [ "$now" -lt $((agent_at + 60)) ] && return 0
+  agent_at=$now
+  [ -r "$PUB/seat_agentlogs.py" ] || return 0
+  since=$(printf '%s' "$POKER_GAME" | sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]{2})([0-9]{2})([0-9]{2}).*/\1-\2-\3T\4:\5:\6Z/')
+  info=$(timeout 20 python3 "$PUB/seat_agentlogs.py" --agent "$PLAYER" --since "$since" --home "$HOME" 2>/dev/null) || return 0
+  case "$info" in *'"models"'*) ;; *) return 0 ;; esac
+  [ "$info" = "$agent_reported" ] && return 0
+  api POST /api/seat/agent "$info" >/dev/null && agent_reported=$info && echo "$(date -u +%T) agent: $info"
 }
 
 # Can this player play here? Sets NEED (empty if it can), HOWTO and KEY. Orcabot's secrets
@@ -217,6 +233,7 @@ if [ "$MODE" = helper ]; then
           type_in "$PUB/prompt.txt" "${given_any:+$CLEAR}" "$note" && given=$POKER_GAME && given_any=1 ;;
         esac
       fi
+      [ "$given" = "$POKER_GAME" ] && report_agent
       sleep 2; continue
     fi
     # Ready for this game: just watch for Start (cheap), and check again every 20s.

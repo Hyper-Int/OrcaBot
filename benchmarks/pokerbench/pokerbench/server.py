@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v12-present
+# REVISION: pokerbench-server-v13-agent-models
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -48,7 +48,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v12-present"
+SERVER_REVISION = "pokerbench-server-v13-agent-models"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -310,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra["honeypot"] = True
                     self._send(200, match.honeypot(seat, uid, path))
                     return
-                if path not in ("/api/seat/setup", "/api/seat/status", "/api/seat/present"):  # not checking in
+                if path not in ("/api/seat/setup", "/api/seat/status", "/api/seat/present", "/api/seat/agent"):  # not checking in
                     match.join(seat, self.headers.get("X-Poker-Seat-Info"))
                 self._seat_route(method, path, query, seat, extra)
             else:
@@ -355,6 +355,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             match.report_seat_status(seat, str(body.get("state", "")), str(body.get("message", "")))
             self._send(200, {"ok": True})
+        elif method == "POST" and path == "/api/seat/agent":
+            # Which model(s) the seat's agent used, from its own logs (agentlogs.py).
+            self._send(200, match.report_agent_info(seat, self._body()))
         elif method == "POST" and path == "/api/seat/present":
             self._send(200, match.present(seat))
         elif method == "POST" and path == "/api/seat/act":

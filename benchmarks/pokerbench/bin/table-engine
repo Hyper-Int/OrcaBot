@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v12-fair-play
+# REVISION: pokerbench-table-engine-v13-agent-models
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -35,7 +35,7 @@ set -u
 START="${START:-manual}"
 RESUME="${RESUME:-auto}"
 REJOIN_GRACE="${REJOIN_GRACE:-240}"
-REVISION=pokerbench-table-engine-v12-fair-play
+REVISION=pokerbench-table-engine-v13-agent-models
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -58,8 +58,9 @@ cp "$SRC/pokerbench/cli.py" "$PUB/poker_cli.py"
 printf '#!/bin/sh\nexec python3 %s/poker_cli.py "$@"\n' "$PUB" > "$PUB/bin/poker"
 cp "$SRC/bin/seat" "$PUB/seat.sh"
 cp "$SRC/pokerbench/screen.py" "$PUB/seat_screen.py"
+cp "$SRC/pokerbench/agentlogs.py" "$PUB/seat_agentlogs.py"
 "$PB" prompt --condition "$CONDITION" --players 2 --format "$FORMAT" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
-chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/seat_screen.py" "$PUB/prompt.txt"
+chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/seat_screen.py" "$PUB/seat_agentlogs.py" "$PUB/prompt.txt"
 # A game this terminal was running when it stopped carries on (RESUME=auto).
 GAME=; [ "$RESUME" = auto ] && GAME=$("$PB" resumable --runs "$PRIV/runs" 2>/dev/null)
 RESUMING=${GAME:+1}

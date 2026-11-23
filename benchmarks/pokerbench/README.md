@@ -202,6 +202,14 @@ whether automating is the stronger strategy. (Under `neutral-v1`, Codex wrote a
 hand-evaluator bot in every match and let it play; Claude Code and Gemini CLI
 never did.) The v1 prompts are kept so earlier runs can be reproduced.
 
+The report header says which **model(s) each agent terminal's agent actually used**,
+with its effort and version: the seat's helper reads them from the agent's own logs
+during the game ([`agentlogs.py`](pokerbench/agentlogs.py): Claude Code's API requests,
+Codex's turn contexts, Gemini CLI's chats; counted from the table's creation) and sends
+them to the engine every minute they change (`POST /api/seat/agent`, kept in `run.json`
+as `agent_info`). Self-reported, like the seat's label. An agent's "Auto" model setting
+shows up here as whichever models it really ran.
+
 The report flags **automated play** per seat from engine-side signals: a run of
 10 or more sub-second decisions, most decisions sub-second, and low reason
 diversity (canned reasons). `from_hand` is where the script took over.
@@ -305,6 +313,7 @@ The dashboard:
   from `engine.env`. The boot command names the agent only on its launch line: Orcabot
   recognises an agent terminal (and the Codex model picker adds its flags) from the
   first time the agent is named, so the helper is told its vendor instead.
+
 - two **bot** terminals, linked to the engine: Claude Sonnet (API) and House bot. They
   run `seat.sh` in the foreground with defaults the table page can change:
 

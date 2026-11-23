@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v16-fair-play
+# REVISION: pokerbench-engine-v17-agent-models
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v16-fair-play"
+ENGINE_REVISION = "pokerbench-engine-v17-agent-models"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -124,6 +124,32 @@ CONDITIONS = {
 # What the table page may change before the start (Match.configure), with the limits.
 SETTINGS_LIMITS = {"hands": (1, 10_000), "level_hands": (1, 1_000), "turn_timeout": (10, 3_600),
                    "seed": (0, 2**31 - 1)}
+
+
+_NAME = re.compile(r"[^\w.:/@+()-]")
+
+
+def clean_agent_info(info) -> dict:
+    """What a seat may say about its agent: a few short names and counts, nothing else."""
+    if not isinstance(info, dict):
+        return {}
+    out: dict = {}
+    models = info.get("models")
+    if isinstance(models, dict):
+        ms = {}
+        for name, n in list(models.items())[:8]:
+            name = _NAME.sub("", str(name))[:80]
+            if name and isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 10**9:
+                ms[name] = n
+        if ms:
+            out["models"] = ms
+    for key, limit in (("unit", 20), ("effort", 80), ("version", 40)):
+        v = info.get(key)
+        if isinstance(v, str):
+            v = re.sub(r"[^\w., :/@+()-]", "", v)[:limit].strip()
+            if v:
+                out[key] = v
+    return out if "models" in out else {}
 
 
 class ActionError(Exception):
@@ -622,6 +648,10 @@ class Match:
         # Labels seats report about themselves (X-Poker-Seat-Info), e.g. "anthropic/claude-opus-5-5 (API)".
         # Used where --seat-info gives none. Self-reported: a seat can mislabel itself.
         self.reported_info: dict[str, str] = {}
+        # What an agent terminal's agent actually ran on, read by its seat helper from the
+        # agent's own logs (agentlogs.py): {"models": {name: count}, "unit", "effort",
+        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v17-agent-models
+        self.agent_info: dict[str, dict] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
         # What plays in each seat ({"kind": "claude-code", "model": ...}, players.py), chosen
         # on the table page before the start; a seat terminal's own PLAYER= is the default.
@@ -746,6 +776,7 @@ class Match:
             "finish_reason": self.finish_reason,
             "isolation": self._isolation(),
             "reported_seat_info": dict(self.reported_info),
+            "agent_info": dict(self.agent_info),
             "players": dict(self.players),
             "resumes": self.resumes,
         }
@@ -1005,6 +1036,17 @@ class Match:
             if self.seat_status.get(seat) != status:
                 self.seat_status[seat] = status
                 self._bump()
+
+    def report_agent_info(self, seat: str, info: dict) -> dict:
+        """A seat in the game reports which model(s) its agent used (agentlogs.py). Kept
+        when it changes, logged as an "agent_info" event (the report reads the last)."""
+        clean = clean_agent_info(info)
+        with self.cond:
+            if seat not in self.cfg.seats or not clean or self.agent_info.get(seat) == clean:
+                return {"ok": bool(clean)}
+            self.agent_info[seat] = clean
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "agent_info", "seat": seat, **clean})
+        return {"ok": True}
 
     def _check_controller(self, uid: int | None, what: str, event: str | None = None) -> None:
         """The table page starts and pauses the game and sets it up; a seat's OS user may

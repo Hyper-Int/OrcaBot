@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v10-no-false-probes
+# REVISION: pokerbench-report-v11-agent-models
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v10-no-false-probes"
+REPORT_REVISION = "pokerbench-report-v11-agent-models"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -28,6 +28,8 @@ DOCUMENTED_SEAT_ROUTES = {
     ("POST", "/api/seat/setup"), ("POST", "/api/seat/status"),
     # An agent seat telling the table its agent is back (a sat-out seat gets its time back).
     ("POST", "/api/seat/present"),
+    # The seat helper reporting which model its agent used (agentlogs.py).
+    ("POST", "/api/seat/agent"),
 }
 PUBLIC_ROUTES = {("GET", "/"), ("GET", "/api/health"), ("GET", "/api/spectate"), ("GET", "/favicon.ico")}
 
@@ -268,6 +270,11 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
         by_seat[d["seat"]].append(d)
     # Configured labels win; otherwise what the seat reported about itself when it joined.
     seat_info = {**(run.get("reported_seat_info") or {}), **{s: label for s, label in (cfg.get("seat_info") or [])}}
+    # What each agent ran on, as its seat last reported it (the engine logs every change).
+    agent_info = dict(run.get("agent_info") or {})
+    for e in events:
+        if e["type"] == "agent_info":
+            agent_info[e["seat"]] = {k: v for k, v in e.items() if k not in ("ts", "type", "seat")}
     bluffs = analyse_bluffs(decisions, results)
     # OS users more than one party runs as (two seats, or a seat and the engine/table).
     bound = Counter(e["uid"] for e in integrity if e["type"] == "seat_bound" and e.get("uid") is not None)
@@ -300,6 +307,7 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
             "stack_play": _stack_play(ds),
             "automation": _automation(ds),
             "label": seat_info.get(seat),
+            "agent": agent_info.get(seat),
             "bluffing": bluffs.get(seat),
         }
 
@@ -345,6 +353,27 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
     return report
 
 
+def agent_summary(info: dict | None) -> str:
+    """"claude-opus-5-5 (112 requests), effort medium, v2.1.330"."""
+    if not info or not info.get("models"):
+        return "not reported"
+    unit = info.get("unit", "")
+    models = ", ".join(f"{m} ({n}{' ' + unit if unit else ''})" for m, n in
+                       sorted(info["models"].items(), key=lambda kv: -kv[1]))
+    extra = [f"effort {info['effort']}"] if info.get("effort") else []
+    extra += [f"v{info['version']}"] if info.get("version") else []
+    return ", ".join([models, *extra])
+
+
+def _agent_lines(rep: dict) -> list[str]:
+    """One header line: the model(s) each agent terminal's agent actually used."""
+    seats = {s: v.get("agent") for s, v in rep["seats"].items() if v.get("agent")}
+    if not seats:
+        return []
+    return ["- Agents (from each agent's own logs, as its seat reported them): "
+            + "; ".join(f"{s}: {agent_summary(a)}" for s, a in seats.items())]
+
+
 def _isolation_line(iso: dict | None) -> str:
     if not iso:
         return "- Seat isolation: unknown"
@@ -375,7 +404,7 @@ def render_md(rep: dict) -> str:
         *([f"- The engine terminal restarted {rep['run']['resumes']} time(s) and the game carried on; each "
            "time the hand in progress was dealt again and the decisions made in it before don't count"]
           if rep["run"].get("resumes") else []),
-        _isolation_line(rep.get("isolation")), "",
+        *_agent_lines(rep), _isolation_line(rep.get("isolation")), "",
     ]
     if tour:
         how = {"bust": "a player busted", "hand_limit": "hand limit reached",
