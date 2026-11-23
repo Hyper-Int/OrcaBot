@@ -314,6 +314,13 @@ The dashboard:
   recognises an agent terminal (and the Codex model picker adds its flags) from the
   first time the agent is named, so the helper is told its vendor instead.
 
+  **Codex runs with `--no-daemon`** (`exec codex --no-daemon ...`). By default every
+  Codex on the VM runs its shell commands in one shared background server, started by
+  whichever Codex came first and keeping that terminal's environment, so `poker` found
+  that terminal's seat (`ORCABOT_PTY_ID`), or none once it was gone (2026-11-22: Codex
+  never played), and several Codex terminals would all play the first one's seat. The
+  helper won't seat a Codex started without it: the table page says to add the flag to
+  the terminal's boot command and restart it.
 - two **bot** terminals, linked to the engine: Claude Sonnet (API) and House bot. They
   run `seat.sh` in the foreground with defaults the table page can change:
 

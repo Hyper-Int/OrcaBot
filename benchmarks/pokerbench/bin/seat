@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v6-agent-models
+# REVISION: pokerbench-seat-v7-codex-no-daemon
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v6-agent-models
+REVISION=pokerbench-seat-v7-codex-no-daemon
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -104,6 +104,25 @@ report_agent() {
   api POST /api/seat/agent "$info" >/dev/null && agent_reported=$info && echo "$(date -u +%T) agent: $info"
 }
 
+# Codex started with --no-daemon? Without it, Codex runs its shell commands in a background
+# server shared by every Codex on the VM, with the environment of the terminal that started
+# it, so `poker` would find that terminal's seat (or none) instead of this one's. The helper
+# is a child of the agent (or of a shell that started it): look at it and a few ancestors.
+codex_own_server() {
+  local pid=${POKER_TEST_PPID:-$PPID} proc=${POKER_TEST_PROC:-/proc} i args
+  for i in 1 2 3 4; do
+    [ -r "$proc/$pid/cmdline" ] || return 0  # can't tell (not Linux): don't block the seat
+    args=$(tr '\0' ' ' < "$proc/$pid/cmdline")
+    case "$args" in
+      *codex*--no-daemon*|*--no-daemon*codex*) return 0 ;;
+      *bin/codex*|codex\ *) return 1 ;;
+    esac
+    pid=$(awk '{print $4}' "$proc/$pid/stat" 2>/dev/null)
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 0
+  done
+  return 0
+}
+
 # Can this player play here? Sets NEED (empty if it can), HOWTO and KEY. Orcabot's secrets
 # broker puts a placeholder in a key's variable, so a set variable means the key is there.
 check() {
@@ -114,7 +133,9 @@ check() {
         || { NEED="Claude Code isn't signed in"; HOWTO="type claude, run /login, then /exit"; KEY=ANTHROPIC_API_KEY; } ;;
     codex)
       [ -n "${OPENAI_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "${CODEX_HOME:-$HOME/.codex}/auth.json" ] \
-        || { NEED="Codex isn't signed in"; HOWTO="type codex login --device-auth"; KEY=OPENAI_API_KEY; } ;;
+        || { NEED="Codex isn't signed in"; HOWTO="type codex login --device-auth"; KEY=OPENAI_API_KEY; }
+      [ -z "$NEED" ] && ! codex_own_server \
+        && NEED="Codex is using its shared background server, which runs every Codex terminal's commands as the first one's (wrong seat): add --no-daemon to the codex command in this terminal's boot command and restart it" ;;
     gemini-cli)
       [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.gemini/oauth_creds.json" ] \
         || { NEED="Gemini CLI isn't signed in"; HOWTO="type gemini and choose Sign in with Google, then /quit"; KEY=GEMINI_API_KEY; } ;;

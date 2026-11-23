@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v20-fair-play
+# REVISION: pokerbench-template-v21-codex-no-daemon
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -34,9 +34,14 @@ PORT = 8765
 # terminal also has Auto-approve flagged commands on: the sandbox answers that prompt
 # with "Allow once" (sandbox/internal/geminiapprove).
 TERMINAL_SETTINGS = {"Gemini CLI": {"autoApproveFlagged": True}}
+# Codex runs with --no-daemon: by default every Codex on the VM sends its shell commands
+# through one shared background server, started by whichever Codex came first and
+# keeping that terminal's environment. Its commands then carried the first terminal's
+# ORCABOT_PTY_ID, so `poker` found no seat after a restart (2026-11-22, Codex never
+# played) or, with several Codex terminals, the first one's seat for all of them.
 AGENT_TERMINALS = (
     ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
-    ("Codex", "openai", 'exec codex ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
+    ("Codex", "openai", 'exec codex --no-daemon ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
     ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust --include-directories /tmp/pokerbench'),
 )
 BOT_TERMINALS = (
