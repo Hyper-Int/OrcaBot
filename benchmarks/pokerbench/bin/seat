@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v11-fresh-agent-each-game
+# REVISION: pokerbench-seat-v12-prompt-check
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v11-fresh-agent-each-game
+REVISION=pokerbench-seat-v12-prompt-check
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -188,8 +188,8 @@ own() {  # method path [json]
 # terminal's raw recent output (Orcabot /screen, with its size), rendered as the screen
 # shows it now (seat_screen.py), since an agent's interface redraws in place and an
 # answered question stays in the output. Empty if none, or if this Orcabot can't say.
-screen_sum= WAIT_Q=
-waiting_on() {  # sets WAIT_Q
+screen_sum= WAIT_Q= AGENT_STATE=
+waiting_on() {  # sets WAIT_Q, and AGENT_STATE: question|working|idle|starting (seat_screen.py), empty if unknown
   local hdr body rows cols sum
   hdr=$(mktemp) body=$(mktemp)
   if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
@@ -204,11 +204,16 @@ waiting_on() {  # sets WAIT_Q
     rows=$(grep -i '^x-screen-rows:' "$hdr" | tr -dc 0-9); cols=$(grep -i '^x-screen-cols:' "$hdr" | tr -dc 0-9)
     sum="$(cksum < "$body") $rows $cols"
     if [ "$sum" != "$screen_sum" ]; then  # render only when the screen has changed
-      WAIT_Q=$(python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" < "$body" 2>/dev/null)
+      local out
+      out=$(python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" --state < "$body" 2>/dev/null)
+      case "$out" in
+        *"|"*) AGENT_STATE=${out%%|*}; WAIT_Q=${out#*|} ;;
+        *) AGENT_STATE=; WAIT_Q=$out ;;  # an older seat_screen.py
+      esac
       screen_sum=$sum
     fi
   else
-    WAIT_Q=
+    WAIT_Q= AGENT_STATE=
   fi
   rm -f "$hdr" "$body"
 }
@@ -220,6 +225,68 @@ type_in() {  # file [clear-command] [extra line]: give the agent the prompt, as 
   own POST /input "$(python3 -c 'import json,sys; t=open(sys.argv[1]).read().rstrip("\n")
 if sys.argv[2]: t += "\n\n" + sys.argv[2]
 print(json.dumps({"text": t, "paste": True, "enter": True}))' "$1" "${3:-}")"
+}
+# Before typing the prompt: wait (up to $1 s) until the agent has drawn its input box, so
+# the prompt isn't typed into an agent still starting up (it would be lost). Unknown
+# (this Orcabot can't show the screen): go ahead. REVISION: pokerbench-seat-v12-prompt-check
+wait_input_box() {
+  local until=$(( $(date +%s) + $1 )) seen=0
+  while [ "$(date +%s)" -lt "$until" ]; do
+    waiting_on
+    case "$AGENT_STATE" in
+      ""|question) return 0 ;;
+      idle|working) seen=$((seen + 1)); [ "$seen" -ge 2 ] && return 0 ;;
+      *) seen=0 ;;
+    esac
+    sleep 2
+  done
+  return 1
+}
+# Seconds since the seat last used the game (`poker`), from the engine: "never" if it
+# hasn't, "unknown" if the engine can't say (an older one).
+last_play_ago() {
+  api GET /api/seat/activity | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+v=d.get("last_play_s_ago", "unknown") if isinstance(d, dict) else "unknown"
+print("never" if v is None else v if v == "unknown" else int(v))' 2>/dev/null || echo unknown
+}
+took() {  # ago t0: the seat used `poker` since t0
+  case "$1" in never|unknown|"") return 1 ;; esac
+  [ "$1" -le $(( $(date +%s) - $2 )) ]
+}
+# Give the agent the game prompt and check it took: the seat must use `poker` within
+# PROMPT_CHECK_S. If it hasn't and its screen sits still, not busy, the prompt was lost
+# (typed before the agent could take it): type it again, up to twice. An agent that got
+# it and then stalls is left alone: that is the model's (or harness's) doing, and part of
+# what is measured. Each prompt is logged with the engine (the report counts them).
+PROMPT_CHECK_S=${POKER_PROMPT_CHECK_S:-90}
+give_prompt() {  # file clear-command note rejoin(0|1)
+  local attempt t0 ago clear=$2 still sum
+  for attempt in 1 2 3; do
+    wait_input_box 45 || echo "$(date -u +%T) no input box after 45s (screen: ${AGENT_STATE:-?}); typing anyway"
+    type_in "$1" "$clear" "$3" || return 1
+    clear=  # cleared once is enough
+    api POST /api/seat/prompted "{\"attempt\": $attempt, \"rejoin\": $([ "$4" = 1 ] && echo true || echo false)}" >/dev/null
+    t0=$(date +%s)
+    still=0 sum=
+    while [ $(( $(date +%s) - t0 )) -lt "$PROMPT_CHECK_S" ]; do
+      sleep 3
+      ago=$(last_play_ago)
+      [ "$ago" = unknown ] && return 0  # an older engine: can't check
+      took "$ago" "$t0" && return 0     # it used `poker`: it took
+    done
+    # Not yet. Lost, or just slow? Watch the screen for 12s: busy or changing means it's working.
+    for still in 1 2 3 4; do
+      waiting_on
+      { [ "$AGENT_STATE" = working ] || [ -z "$AGENT_STATE" ] || { [ -n "$sum" ] && [ "$screen_sum" != "$sum" ]; }; } && return 0
+      sum=$screen_sum; sleep 3
+    done
+    took "$(last_play_ago)" "$t0" && return 0
+    [ "$attempt" -lt 3 ] && echo "$(date -u +%T) the prompt didn't take (no \`poker\` use in ${PROMPT_CHECK_S}s, screen still): typing it again"
+  done
+  echo "$(date -u +%T) the prompt still didn't take after 3 tries; leaving it"
+  return 0
 }
 MIDGAME="Note: this game is already under way (this terminal restarted during it). Your seat is still in it: start with \`poker wait\`."
 
@@ -439,7 +506,8 @@ if [ "$MODE" = helper ]; then
           waiting_on
           if [ -n "$WAIT_Q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$WAIT_Q\""; sleep 3; continue; fi
           echo "$(date -u +%T) game $POKER_GAME ${note:+under way, rejoining}${note:-started}: giving the agent its prompt"
-          type_in "$PUB/prompt.txt" "${given_any:+$CLEAR}" "$note" && given=$POKER_GAME && given_any=1 ;;
+          give_prompt "$PUB/prompt.txt" "${given_any:+$CLEAR}" "$note" "$([ -n "$note" ] && echo 1 || echo 0)" \
+            && given=$POKER_GAME && given_any=1 ;;
         esac
       fi
       [ "$given" = "$POKER_GAME" ] && report_agent

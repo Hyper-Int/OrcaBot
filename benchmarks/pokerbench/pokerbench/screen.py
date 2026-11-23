@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-screen-v3-antigravity
+# REVISION: pokerbench-screen-v4-agent-state
 """What an agent terminal shows right now, from its raw recent output.
 
 A seat's helper asks Orcabot for its own terminal's raw output (/screen: the last 64KB
@@ -18,6 +18,11 @@ seats as seat_screen.py.
 
     python3 seat_screen.py --rows 40 --cols 120 < output      # prints the question, if any
     python3 seat_screen.py --rows 40 --cols 120 --print < output
+    python3 seat_screen.py --rows 40 --cols 120 --state < output  # state|question
+
+The state says whether a prompt typed now would land: "question" (a setup screen),
+"working" (busy: every agent shows how to interrupt it), "idle" (at its input box) or
+"starting" (no input box yet: an agent that has just been launched).
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ import argparse
 import re
 import sys
 
-SCREEN_REVISION = "pokerbench-screen-v3-antigravity"
+SCREEN_REVISION = "pokerbench-screen-v4-agent-state"
 
 # Setup screens of Claude Code, Codex and Gemini CLI that wait for the user. While one is
 # on the screen, a pasted prompt would land in it.
@@ -273,14 +278,35 @@ def waiting_question(screen_text: str) -> str:
     return next((q for q in QUESTIONS if q in flat), "")
 
 
+# Busy: each agent says how to interrupt it while it works (Claude Code, Codex: "esc to
+# interrupt"; Gemini CLI, Antigravity: "esc to cancel").
+WORKING = re.compile(r"esc to (interrupt|cancel)|ctrl\+c to interrupt", re.I)
+# Its input box: a line starting with the prompt mark (">" Claude Code, Gemini CLI,
+# Antigravity; "›" Codex; "❯"), possibly inside a box.
+INPUT_BOX = re.compile(r"^\s*[│┃|]?\s*[>›❯](\s|$)", re.M)
+
+
+def agent_state(screen_text: str) -> str:
+    """question | working | idle | starting (see the module docstring)."""
+    if waiting_question(screen_text):
+        return "question"
+    if WORKING.search(screen_text):
+        return "working"
+    return "idle" if INPUT_BOX.search(screen_text) else "starting"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="render a terminal's raw output; print a waiting setup question")
     p.add_argument("--rows", type=int, default=0)
     p.add_argument("--cols", type=int, default=0)
     p.add_argument("--print", action="store_true", help="print the rendered screen instead")
+    p.add_argument("--state", action="store_true", help="print the agent's state, |, then the question")
     args = p.parse_args(argv)
     text = render(sys.stdin.buffer.read(), args.rows or 40, args.cols or 120)
-    print(text if args.print else waiting_question(text))
+    if args.state:
+        print(f"{agent_state(text)}|{waiting_question(text)}")
+    else:
+        print(text if args.print else waiting_question(text))
     return 0
 
 

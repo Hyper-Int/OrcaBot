@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v13-agent-models
+# REVISION: pokerbench-server-v14-prompt-check
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -48,7 +48,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v13-agent-models"
+SERVER_REVISION = "pokerbench-server-v14-prompt-check"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -310,7 +310,8 @@ class Handler(BaseHTTPRequestHandler):
                     extra["honeypot"] = True
                     self._send(200, match.honeypot(seat, uid, path))
                     return
-                if path not in ("/api/seat/setup", "/api/seat/status", "/api/seat/present", "/api/seat/agent"):  # not checking in
+                if path not in ("/api/seat/setup", "/api/seat/status", "/api/seat/present", "/api/seat/agent",
+                                "/api/seat/activity", "/api/seat/prompted"):  # the helper, not the player
                     match.join(seat, self.headers.get("X-Poker-Seat-Info"))
                 self._seat_route(method, path, query, seat, extra)
             else:
@@ -358,6 +359,15 @@ class Handler(BaseHTTPRequestHandler):
         elif method == "POST" and path == "/api/seat/agent":
             # Which model(s) the seat's agent used, from its own logs (agentlogs.py).
             self._send(200, match.report_agent_info(seat, self._body()))
+        elif method == "GET" and path == "/api/seat/activity":
+            self._send(200, match.seat_activity(seat))
+        elif method == "POST" and path == "/api/seat/prompted":
+            body = self._body()
+            try:
+                attempt = int(body.get("attempt", 1))
+            except (TypeError, ValueError):
+                attempt = 1
+            self._send(200, match.prompt_given(seat, attempt, bool(body.get("rejoin"))))
         elif method == "POST" and path == "/api/seat/present":
             self._send(200, match.present(seat))
         elif method == "POST" and path == "/api/seat/act":

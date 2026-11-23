@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v21-fair-v2
+# REVISION: pokerbench-engine-v22-prompt-check
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v21-fair-v2"
+ENGINE_REVISION = "pokerbench-engine-v22-prompt-check"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -226,7 +226,7 @@ class MatchConfig:
     # "no-limit", or "limit": fixed-limit hold'em, bets and raises of a fixed size (the small
     # bet, the big blind, preflop and on the flop; the big bet, twice that, on the turn and
     # river), at most 4 per street. A separate game: rated separately.
-    # REVISION: pokerbench-engine-v21-fair-v2
+    # REVISION: pokerbench-engine-v22-prompt-check
     betting: str = "no-limit"
 
     def __post_init__(self):
@@ -714,6 +714,9 @@ class Match:
         self.counters = {seat: _zero_counters() for seat in cfg.seats}
         # Turns in a row each seat let time out (cfg.sit_out_after: it is sitting out).
         self.missed: dict[str, int] = {seat: 0 for seat in cfg.seats}
+        # When each seat last used the game (any `poker` request): its helper checks a
+        # prompt it typed in took (seat_activity). REVISION: pokerbench-engine-v22-prompt-check
+        self.last_play: dict[str, float] = {}
         # Sitting-out seats whose player said it's back during its own (short) turn.
         self.back_next: set[str] = set()
         # The table page's settings: a cash game is duplicated unless the run was set up without it.
@@ -900,6 +903,7 @@ class Match:
     # -- seat API -------------------------------------------------------------
     def join(self, seat: str, info: str | None = None) -> None:
         with self.cond:
+            self.last_play[seat] = self.clock()
             if info and seat not in self.reported_info:
                 label = re.sub(r"[^\w./:() +-]", "", info)[:80].strip()
                 if label:
@@ -1069,6 +1073,23 @@ class Match:
             if self.seat_status.get(seat) != status:
                 self.seat_status[seat] = status
                 self._bump()
+
+    def seat_activity(self, seat: str) -> dict:
+        """Seconds since the seat last used the game (None: not yet), for its helper."""
+        with self.cond:
+            t = self.last_play.get(seat)
+            return {"last_play_s_ago": None if t is None else round(self.clock() - t, 1)}
+
+    def prompt_given(self, seat: str, attempt: int = 1, rejoin: bool = False) -> dict:
+        """The seat's helper typed the game prompt in: "rejoin" when its terminal restarted
+        during the game, attempt > 1 when the last one didn't take. Logged for the report."""
+        with self.cond:
+            if seat not in self.cfg.seats:
+                return {"ok": False}
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "prompt_given", "seat": seat,
+                                             "attempt": max(1, min(int(attempt), 99)), "rejoin": bool(rejoin),
+                                             "hand": self.hand.number if self.hand else None})
+        return {"ok": True}
 
     def report_agent_info(self, seat: str, info: dict) -> dict:
         """A seat in the game reports which model(s) its agent used (agentlogs.py). Kept

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v16-reclassify
+# REVISION: pokerbench-report-v17-stalls
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v16-reclassify"
+REPORT_REVISION = "pokerbench-report-v17-stalls"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -30,8 +30,35 @@ DOCUMENTED_SEAT_ROUTES = {
     ("POST", "/api/seat/present"),
     # The seat helper reporting which model its agent used (agentlogs.py).
     ("POST", "/api/seat/agent"),
+    # The seat helper checking the prompt it typed in took, and saying it typed it.
+    ("GET", "/api/seat/activity"), ("POST", "/api/seat/prompted"),
 }
 PUBLIC_ROUTES = {("GET", "/"), ("GET", "/api/health"), ("GET", "/api/spectate"), ("GET", "/favicon.ico")}
+
+
+def _stalls(seat: str, ds: list[dict], events: list[dict]) -> dict:
+    """A seat that stopped playing for a while, and what was done about it: its longest run
+    of turns in a row that timed out (the model or its harness stalled: it is what is being
+    measured, and nothing restarts it), how often it sat out, and the times its terminal
+    restarted during the game or the prompt typed in for it didn't take."""
+    run, best, start, best_hands = 0, 0, None, None
+    for d in ds:
+        if d.get("timed_out"):
+            run += 1
+            start = d["hand"] if run == 1 else start
+            if run > best:
+                best, best_hands = run, (start, d["hand"])
+        else:
+            run = 0
+    mine = [e for e in events if e.get("seat") == seat]
+    given = [e for e in mine if e["type"] == "prompt_given"]
+    return {
+        "longest_timeout_run": best,
+        "longest_timeout_hands": list(best_hands) if best_hands else None,
+        "sat_out": sum(1 for e in mine if e["type"] == "sitting_out"),
+        "terminal_restarts": [e.get("hand") for e in given if e.get("rejoin") and e.get("attempt", 1) == 1],
+        "prompt_retyped": sum(1 for e in given if e.get("attempt", 1) > 1),
+    }
 
 
 def _table_control(r: dict) -> bool:
@@ -318,6 +345,7 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
             "orcabot_tool_uses": sum(1 for t in tool_uses if t["seat"] == seat and t["kind"] == "orcabot_tool"),
             "other_tool_uses": sum(1 for t in tool_uses if t["seat"] == seat and t["kind"] == "other"),
             "bluffing": bluffs.get(seat),
+            "stalls": _stalls(seat, ds, events),
         }
 
     # Seat requests the engine refused (bad/forged token, claiming a taken or other seat).
@@ -350,6 +378,8 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
         "isolation": (json.loads((run_dir / "results.json").read_text(encoding="utf-8")).get("isolation")
                       if (run_dir / "results.json").exists() else run.get("isolation")),
         "integrity_events": [e for e in integrity if e["type"] != "seat_bound"],
+        # Written by hand (one JSON object a line: ts, note): interventions during the game.
+        "operator_notes": _jsonl(run_dir / "notes.jsonl"),
         "file_reads": file_reads[:500],
         "tool_uses": tool_uses[:1000],
         "seat_bindings": [e for e in integrity if e["type"] == "seat_bound"],
@@ -469,6 +499,24 @@ def render_md(rep: dict) -> str:
         lines.append(f"| {seat} | {s['decisions']} | {s['vpip_pct']} | {s['pfr_pct']} | {s['aggression_factor']} "
                      f"| {s['latency_median_s']} | {s['latency_p90_s']} | {s['timeouts']} | {s['invalid_actions']} "
                      f"| {len(s['off_api_requests'])} | {auto} |")
+    stalled = [(seat, s["stalls"]) for seat, s in rep["seats"].items() if s.get("stalls") and (
+        s["stalls"]["longest_timeout_run"] >= 2 or s["stalls"]["terminal_restarts"] or s["stalls"]["prompt_retyped"])]
+    if stalled:
+        lines += ["", "## Stalls and restarts", "",
+                  "Turns that time out are folded (or checked): a model or harness that stalls pays for it, "
+                  "and nothing restarts it. After 3 in a row a seat sits out, with a short clock until it acts again.", "",
+                  "| Seat | Timeouts | Longest run (hands) | Sat out | Terminal restarted (hand) | Prompt typed again |",
+                  "|---|---:|---|---:|---|---:|"]
+        for seat, st in stalled:
+            h = st["longest_timeout_hands"]
+            run = f"{st['longest_timeout_run']}" + (f" ({h[0]}–{h[1]})" if h else "")
+            restarts = ", ".join(str(x) for x in st["terminal_restarts"]) or "–"
+            lines.append(f"| {seat} | {rep['seats'][seat]['timeouts']} | {run} | {st['sat_out']} | {restarts} "
+                         f"| {st['prompt_retyped']} |")
+    if rep.get("operator_notes"):
+        lines += ["", "## Operator notes", ""]
+        for n in rep["operator_notes"]:
+            lines.append(f"- {n.get('ts', '')} {n.get('note', '')}")
     stack_rows = [(seat, b, row) for seat, s in rep["seats"].items() for b, row in (s.get("stack_play") or {}).items()]
     if tour and stack_rows:
         lines += ["", "## Stack management (preflop, by effective stack)", "",
