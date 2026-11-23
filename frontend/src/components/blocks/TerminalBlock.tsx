@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v15-restart-background
-const TERMINAL_BLOCK_REVISION = "terminal-block-v15-restart-background";
+// REVISION: terminal-block-v16-rename
+const TERMINAL_BLOCK_REVISION = "terminal-block-v16-rename";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -1458,6 +1458,26 @@ export function TerminalBlock({
     },
     [data, terminalMeta, session?.id]
   );
+
+  // Rename: only the name changes; every other setting in the content is kept as is.
+  // Takes effect at once (no restart): PokerBench, for one, reads names from the links.
+  // REVISION: terminal-block-v16-rename
+  const [editingName, setEditingName] = React.useState<string | null>(null);
+  const renameFromMenuRef = React.useRef(false);
+  const canRename = !!data.onItemChange;
+  const commitRename = React.useCallback(() => {
+    const next = (editingName ?? "").trim().slice(0, 60);
+    setEditingName(null);
+    if (!next || next === terminalMeta.name || !data.onItemChange) return;
+    let current: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(data.content || "");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+    } catch {
+      // A legacy terminal whose content is just its name.
+    }
+    data.onItemChange({ content: JSON.stringify({ ...current, name: next }) });
+  }, [editingName, terminalMeta.name, data]);
 
   const handleTtsChange = React.useCallback(
     (provider: string, voice: string) => {
@@ -4173,9 +4193,31 @@ export function TerminalBlock({
               <SquareTerminal className="w-4 h-4 text-[var(--foreground-muted)]" />
             </span>
           )}
-          <span className="text-[16px] font-medium text-[var(--foreground)]" title={terminalName}>
-            {terminalName}
-          </span>
+          {editingName !== null ? (
+            <input
+              autoFocus
+              value={editingName}
+              maxLength={60}
+              aria-label="Terminal name"
+              onChange={(e) => setEditingName(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitRename();
+                else if (e.key === "Escape") setEditingName(null);
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+              className="nodrag text-[16px] font-medium text-[var(--foreground)] bg-[var(--background-surface)] border border-[var(--border-focus,var(--border))] rounded px-1 py-0 w-44 outline-none"
+            />
+          ) : (
+            <span
+              className={cn("text-[16px] font-medium text-[var(--foreground)]", canRename && "cursor-text")}
+              title={canRename ? `${terminalName} (double-click to rename)` : terminalName}
+              onDoubleClick={canRename ? (e) => { e.stopPropagation(); setEditingName(terminalName); } : undefined}
+            >
+              {terminalName}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5" style={{ pointerEvents: "auto" }}>
@@ -4217,7 +4259,7 @@ export function TerminalBlock({
           {(isClaudeSession || isAgentic) && (
             <>
               {/* Agents button - hidden for Gemini, Codex, and OpenClaw */}
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
+              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && (
                 <button
                   type="button"
                   onClick={() => setShowAttachedList((prev) => !prev)}
@@ -4387,7 +4429,23 @@ export function TerminalBlock({
                 <Settings className="w-5 h-5" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuContent
+              align="end"
+              className="w-40"
+              onCloseAutoFocus={(e) => {
+                // Rename: keep focus on the name field instead of the menu button.
+                if (renameFromMenuRef.current) {
+                  renameFromMenuRef.current = false;
+                  e.preventDefault();
+                }
+              }}
+            >
+              {canRename && (
+                <DropdownMenuItem onClick={() => { renameFromMenuRef.current = true; setEditingName(terminalName); }} className="gap-2">
+                  <Pencil className="w-3 h-3" />
+                  <span>Rename</span>
+                </DropdownMenuItem>
+              )}
               {enterFullscreen && (
                 <>
                   <DropdownMenuItem onClick={() => enterFullscreen(id)} className="gap-2">
@@ -4462,7 +4520,7 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
+              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && (
                 <DropdownMenuItem onClick={() => setActivePanel(activePanel === "subagents" ? null : "subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
                   <span>Agents</span>

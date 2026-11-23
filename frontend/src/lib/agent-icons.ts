@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: workspace-sidebar-v1-agent-icons
-const MODULE_REVISION = "workspace-sidebar-v1-agent-icons";
+// REVISION: agent-icons-v2-detect-from-script
+const MODULE_REVISION = "agent-icons-v2-detect-from-script";
 console.log(`[agent-icons] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -38,6 +38,12 @@ const NAME_MAP: Record<string, AgentType> = {
   Moltbot: "moltbot",
 };
 
+/**
+ * The agent a boot command runs: the whole command ("codex"), else the first agent a
+ * non-comment line runs (a script such as PokerBench's seats: `... exec codex -m x`,
+ * `/usr/bin/claude`). Then the terminal's name, exactly or as a prefix ("Codex 2"), so a
+ * renamed terminal keeps its agent type. REVISION: agent-icons-v2-detect-from-script
+ */
 export function getAgentType(
   bootCommand?: string,
   name?: string
@@ -45,10 +51,26 @@ export function getAgentType(
   if (bootCommand && BOOT_COMMAND_MAP[bootCommand]) {
     return BOOT_COMMAND_MAP[bootCommand];
   }
-  if (name && NAME_MAP[name]) {
-    return NAME_MAP[name];
+  const fromScript = bootCommand ? agentInScript(bootCommand) : null;
+  if (fromScript) return fromScript;
+  if (name) {
+    if (NAME_MAP[name]) return NAME_MAP[name];
+    const prefix = Object.keys(NAME_MAP).find((n) => name.startsWith(n + " ") || name.startsWith(n + "-") || name.startsWith(n + "("));
+    if (prefix) return NAME_MAP[prefix];
   }
   return "shell";
+}
+
+function agentInScript(script: string): AgentType | null {
+  for (const raw of script.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    for (const token of line.split(/[\s;&|()`]+/)) {
+      const word = token.split("/").pop() ?? "";
+      if (Object.prototype.hasOwnProperty.call(BOOT_COMMAND_MAP, word)) return BOOT_COMMAND_MAP[word];
+    }
+  }
+  return null;
 }
 
 const ICON_SRC_MAP: Record<AgentType, string | null> = {
