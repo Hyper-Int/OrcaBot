@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-host-v5-limit
+# REVISION: pokerbench-host-v6-toolaudit
 """The engine terminal's host (``pokerbench host``): keeps the table in step with the
 canvas while the engine runs.
 
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .players import seat_name
 
-HOST_REVISION = "pokerbench-host-v5-limit"
+HOST_REVISION = "pokerbench-host-v6-toolaudit"
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -343,5 +343,8 @@ def cmd_host(args) -> int:
     # Seats opening each other's files, earlier transcripts or results (readwatch.py).
     from . import readwatch
     readwatch.start(Path(args.run_dir))
+    # Tools agent seats used other than `poker`: Orcabot's (a second honeypot) and others.
+    from . import toolaudit
+    toolaudit.start(Path(args.run_dir))
     host.run(args.interval)
     return 0

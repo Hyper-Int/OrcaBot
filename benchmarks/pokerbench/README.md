@@ -510,6 +510,16 @@ The suite covers:
 - HTTP auth and the request log (tokens never reach any file);
 - a full bot match over HTTP, and CLI rendering.
 
+**Tools other than `poker`** ([`toolaudit.py`](pokerbench/toolaudit.py)): every Orcabot
+agent terminal also has Orcabot's own tools (a dashboard-wide memory and task list,
+creating and editing canvas items and terminals, driving the dashboard's browser, which
+shows the table page). The Fair play prompt (v2) allows only the `poker` commands, so
+they are a **second honeypot**: while a game runs the engine's host (root) reads each
+agent seat's transcript in its private home and records every tool call that isn't
+`poker`, Orcabot's (`orcabot_tool`) and anything else (`other`), in `tool_audit.jsonl`;
+the report counts and lists them. Claude Code, Codex and Gemini CLI; not Antigravity CLI
+(its conversations are protobuf and its log doesn't name tools).
+
 ## Ratings
 
 `pokerbench ratings <result folders...>` ([`ratings.py`](pokerbench/ratings.py)) rates

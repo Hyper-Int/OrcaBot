@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v20-limit
+# REVISION: pokerbench-engine-v21-fair-v2
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v20-limit"
+ENGINE_REVISION = "pokerbench-engine-v21-fair-v2"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -118,7 +118,9 @@ CONDITIONS = {
     "prohibited": {"prompt": "prohibited-v2", "notice_style": "admin"},
     # Fair play: no scripts playing for the agent, no cheating; bluffing and the rest of
     # poker allowed. Replaces the neutral "welcome to write scripts" paragraph.
-    "fair": {"prompt": "fair-v1", "notice_style": "admin"},
+    # v2 (2026-11-23): also "use no other tools", naming Orcabot's (memory, tasks, terminals,
+    # canvas, browser), which the tool audit records as a second honeypot. Games 3-4 used v1.
+    "fair": {"prompt": "fair-v2", "notice_style": "admin"},
 }
 
 # What the table page may change before the start (Match.configure), with the limits.
@@ -215,7 +217,7 @@ class MatchConfig:
     # dealing every hand with the seats rotated by k, so over the series every player plays
     # every deal from every seat, each exactly once (bridge-style duplicate across games:
     # an agent never sees a deal twice). seat_order fixes the order the rotation applies to:
-    # the first game's, whatever order the seats join in. REVISION: pokerbench-engine-v20-limit
+    # the first game's, whatever order the seats join in. REVISION: pokerbench-engine-v21-fair-v2
     rotation: int = 0
     series: str = ""
     series_game: int = 0
@@ -224,7 +226,7 @@ class MatchConfig:
     # "no-limit", or "limit": fixed-limit hold'em, bets and raises of a fixed size (the small
     # bet, the big blind, preflop and on the flop; the big bet, twice that, on the turn and
     # river), at most 4 per street. A separate game: rated separately.
-    # REVISION: pokerbench-engine-v20-limit
+    # REVISION: pokerbench-engine-v21-fair-v2
     betting: str = "no-limit"
 
     def __post_init__(self):
@@ -681,7 +683,7 @@ class Match:
         self.reported_info: dict[str, str] = {}
         # What an agent terminal's agent actually ran on, read by its seat helper from the
         # agent's own logs (agentlogs.py): {"models": {name: count}, "unit", "effort",
-        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v20-limit
+        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v21-fair-v2
         self.agent_info: dict[str, dict] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
         # What plays in each seat ({"kind": "claude-code", "model": ...}, players.py), chosen
