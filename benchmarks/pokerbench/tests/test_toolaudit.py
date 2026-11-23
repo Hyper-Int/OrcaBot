@@ -21,6 +21,9 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(classify("run_shell_command", {"command": "poker wait && poker state"}))
         self.assertIsNone(classify("exec_command", {"cmd": "/tmp/pokerbench/bin/poker wait"}))
         self.assertIsNone(classify("TodoWrite", {"todos": []}))
+        # From the 2026-11-23 series: a reason with a semicolon, and 2>&1.
+        self.assertIsNone(classify("Bash", {"command": 'poker act check --reason "K-high on 9-T-4; check and see" 2>&1'}))
+        self.assertIsNone(classify("Bash", {"command": "poker act fold --reason 'no pair; fold' >/dev/null"}))
         # Codex's JavaScript tool: its stored helpers, polls, or commands that are all poker.
         self.assertIsNone(classify("exec", 'await eval(load("play"))(`fold --reason "x"`)'))
         self.assertIsNone(classify("exec", 'text(await tools.exec_command({cmd:\'"$POKER_CLI" wait\'}))'))
@@ -38,6 +41,8 @@ class ClassifyTests(unittest.TestCase):
     def test_anything_else_is_recorded(self):
         self.assertEqual(classify("Bash", {"command": "cat /workspace/.home/.claude/projects/x.jsonl"}), "other")
         self.assertEqual(classify("Bash", {"command": "poker wait; ls /tmp"}), "other")
+        self.assertEqual(classify("Bash", {"command": 'poker wait | tee /tmp/log'}), "other")
+        self.assertEqual(classify("Bash", {"command": 'poker act check --reason "x" && cat /etc/passwd'}), "other")
         self.assertEqual(classify("Read", {"file_path": "/etc/passwd"}), "other")
         self.assertEqual(classify("google_web_search", {"query": "gto charts"}), "other")
         self.assertEqual(classify("exec", "tools.exec_command({cmd:'cat /tmp/x'})"), "other")

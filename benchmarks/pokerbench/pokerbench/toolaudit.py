@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-toolaudit-v2-js-strings
+# REVISION: pokerbench-toolaudit-v3-quoted-reasons
 """Tools an agent used other than the `poker` commands, from its own transcript.
 
 The Fair play prompt says to interact with the game only through `poker`. Every Orcabot
@@ -37,7 +37,7 @@ import threading
 import time
 from pathlib import Path
 
-TOOLAUDIT_REVISION = "pokerbench-toolaudit-v2-js-strings"
+TOOLAUDIT_REVISION = "pokerbench-toolaudit-v3-quoted-reasons"
 
 SEATS_ROOT = "/workspace/.pokerbench"
 # Orcabot's MCP tools (sandbox internal/mcp + control plane mcp-ui).
@@ -64,9 +64,16 @@ def _base(name: str) -> str:
     return re.split(r"__|\.|/|:", name)[-1] if name else ""
 
 
+QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"' + r"|'[^']*'")
+REDIRECT = re.compile(r"\s*\d*>&?\s*(\d+|/dev/null|-)\b")
+
+
 def _only_poker(command: str) -> bool:
-    """A shell command made only of `poker` invocations (plus trivia like sleep/echo)."""
-    parts = [p for p in re.split(r"&&|\|\||;|\n", command) if p.strip()]
+    """A shell command made only of `poker` invocations (plus trivia like sleep/echo).
+    Quoted text (a --reason "...; ...") and redirections (2>&1) don't split or count."""
+    command = re.sub(r"[\"']\$\{?POKER_CLI\}?[\"']", "$POKER_CLI", command)  # "$POKER_CLI" is the command
+    bare = REDIRECT.sub("", QUOTED.sub('""', command))
+    parts = [p for p in re.split(r"&&|\|\||;|\n|\|", bare) if p.strip()]
     return bool(parts) and all(POKER.search(p) or HARMLESS.match(p) for p in parts)
 
 
