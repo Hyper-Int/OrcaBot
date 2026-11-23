@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v8-gemini-auto-approve
-const sandboxClientRevision = "sandbox-client-v8-gemini-auto-approve";
+// REVISION: sandbox-client-v9-background-processes
+const sandboxClientRevision = "sandbox-client-v9-background-processes";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -25,6 +25,23 @@ export interface SandboxSession {
 
 export interface SandboxPty {
   id: string;
+}
+
+export interface SandboxBackgroundProcess {
+  pid: number;
+  ppid: number;
+  uid: number;
+  name: string;
+  command: string;
+  start_ticks: number;
+  started_at: string;
+  pty_id: string;
+}
+
+export interface SandboxBackgroundStopResult {
+  pid: number;
+  outcome: 'stopped' | 'gone' | 'refused' | 'failed';
+  detail?: string;
 }
 
 export class SandboxClient {
@@ -372,4 +389,39 @@ export class SandboxClient {
     }
   }
 
+  // A terminal's leftover background processes (sandbox cmd/server/bgproc.go), for the
+  // restart dialog. ptyIds: the terminal's current and earlier PTY ids.
+  // REVISION: sandbox-client-v9-background-processes
+  async listBackgroundProcesses(sessionId: string, ptyIds: string[], machineId?: string): Promise<SandboxBackgroundProcess[]> {
+    const headers = new Headers(this.authHeaders());
+    if (machineId) headers.set('X-Sandbox-Machine-ID', machineId);
+    const q = encodeURIComponent(ptyIds.join(','));
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/background-processes?pty_ids=${q}`, { headers }, 8_000);
+    if (!res.ok) {
+      throw new Error(`Failed to list background processes: ${res.status}`);
+    }
+    const body = await res.json() as { processes?: SandboxBackgroundProcess[] };
+    return body.processes || [];
+  }
+
+  async stopBackgroundProcesses(
+    sessionId: string,
+    ptyIds: string[],
+    processes: Array<{ pid: number; start_ticks: number }>,
+    machineId?: string,
+  ): Promise<SandboxBackgroundStopResult[]> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) headers.set('X-Sandbox-Machine-ID', machineId);
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/background-processes/stop`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ pty_ids: ptyIds, processes }),
+    }, 20_000);
+    if (!res.ok) {
+      throw new Error(`Failed to stop background processes: ${res.status}`);
+    }
+    const body = await res.json() as { results?: SandboxBackgroundStopResult[] };
+    return body.results || [];
+  }
 }

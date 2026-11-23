@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v29-auto-sleep
-console.log(`[controlplane] REVISION: controlplane-v29-auto-sleep loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v30-background-processes
+console.log(`[controlplane] REVISION: controlplane-v30-background-processes loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -24,6 +24,7 @@ import {
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
 import { nearestFlyRegion } from './sessions/handler';
+import * as backgroundProcesses from './sessions/background-processes';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
@@ -3107,6 +3108,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return sessions.stоpSessiоn(env, segments[1], auth.user!.id, ctx);
+  }
+
+  // GET /sessions/:id/background-processes - What a restart would leave running
+  // POST /sessions/:id/background-processes/stop - Stop the ones the user chose
+  // REVISION: controlplane-v30-background-processes
+  if (segments[0] === 'sessions' && segments[2] === 'background-processes') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (segments.length === 3 && method === 'GET') {
+      return backgroundProcesses.listBackgroundProcesses(env, segments[1], auth.user!.id);
+    }
+    if (segments.length === 4 && segments[3] === 'stop' && method === 'POST') {
+      return backgroundProcesses.stopBackgroundProcesses(env, request, segments[1], auth.user!.id);
+    }
   }
 
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v8-output-watchers
+// REVISION: hub-v9-process-group
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const hubRevision = "hub-v8-output-watchers"
+const hubRevision = "hub-v9-process-group"
 
 func init() {
 	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
@@ -545,6 +545,15 @@ func (h *Hub) IsProcessAlive() bool {
 	default:
 		return true
 	}
+}
+
+// ProcessGroup is the process group of a running PTY (0 if it has stopped): the
+// processes a restart of this terminal kills. REVISION: hub-v9-process-group
+func (h *Hub) ProcessGroup() int {
+	if !h.IsProcessAlive() {
+		return 0
+	}
+	return h.pty.ProcessGroup()
 }
 
 // ClientCount returns the number of connected clients

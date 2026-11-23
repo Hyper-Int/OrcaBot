@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: pty-v4-error-codes
+// REVISION: pty-v5-process-group
 
 package pty
 
@@ -316,6 +316,19 @@ func (p *PTY) Cwd() string {
 		return ""
 	}
 	return path
+}
+
+// ProcessGroup returns the PTY process's group id (the leader's pid: creack/pty makes it
+// a session and group leader), or 0 once it is closed or has no process. Close kills
+// this group; anything that left it (setsid, a detached daemon) outlives the PTY.
+// REVISION: pty-v5-process-group
+func (p *PTY) ProcessGroup() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
 }
 
 // Signal sends a signal to the PTY process

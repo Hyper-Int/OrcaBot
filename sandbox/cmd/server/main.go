@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v52-gemini-auto-approve
+// REVISION: main-v53-background-processes
 
 package main
 
@@ -43,7 +43,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v52-gemini-auto-approve"
+const mainRevision = "main-v53-background-processes"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -636,6 +636,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleListPTYs)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeletePTY)))
+	// A terminal's leftover background processes, for the restart dialog (bgproc.go).
+	// REVISION: main-v53-background-processes
+	mux.HandleFunc("GET /sessions/{sessionId}/background-processes", s.requireMachine(s.auth.RequireAuthFunc(s.handleListBackgroundProcesses)))
+	mux.HandleFunc("POST /sessions/{sessionId}/background-processes/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleStopBackgroundProcesses)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.requireMachine(s.auth.RequireAuthFunc(s.handleWritePty)))
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionEnv)))
 	mux.HandleFunc("POST /sessions/{sessionId}/auto-sleep", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionAutoSleep)))

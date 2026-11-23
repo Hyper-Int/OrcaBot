@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v14-gemini-auto-approve
-const TERMINAL_BLOCK_REVISION = "terminal-block-v14-gemini-auto-approve";
+// REVISION: terminal-block-v15-restart-background
+const TERMINAL_BLOCK_REVISION = "terminal-block-v15-restart-background";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -48,6 +48,8 @@ import {
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { listBackgroundProcesses, stopBackgroundProcesses, type BackgroundProcess } from "@/lib/api/cloudflare/background-processes";
+import { RestartBackgroundDialog } from "./RestartBackgroundDialog";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { perfStart, perfMark, perfEnd } from "@/lib/perf";
@@ -2470,6 +2472,57 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, actualItemId, stopSession, markSessionStopped, upsertDashboardSession]);
 
+  // A restart the user asked for (menu, "restart to apply", Reopen): first ask about
+  // background processes the terminal started that a restart won't stop (daemons,
+  // servers), if there are any. Automatic restarts (crash loop, watchdog) call
+  // handleReopen directly and never ask. If the list can't be fetched, just restart.
+  // REVISION: terminal-block-v15-restart-background
+  const [restartAsk, setRestartAsk] = React.useState<BackgroundProcess[] | null>(null);
+  const [restartAskBusy, setRestartAskBusy] = React.useState(false);
+  const [restartChecking, setRestartChecking] = React.useState(false);
+  const handleUserRestart = React.useCallback(async () => {
+    if (isCreatingSession || restartChecking) return;
+    if (session?.id) {
+      setRestartChecking(true);
+      try {
+        const procs = await listBackgroundProcesses(session.id);
+        if (procs.length > 0) {
+          setRestartAsk(procs);
+          return;
+        }
+      } finally {
+        setRestartChecking(false);
+      }
+    }
+    void handleReopen();
+  }, [session?.id, isCreatingSession, restartChecking, handleReopen]);
+
+  const handleRestartChoice = React.useCallback(async (stop: BackgroundProcess[]) => {
+    if (stop.length > 0 && session?.id) {
+      setRestartAskBusy(true);
+      try {
+        const results = await stopBackgroundProcesses(session.id, stop);
+        const stopped = results.filter((r) => r.outcome === "stopped" || r.outcome === "gone").length;
+        const notStopped = results.filter((r) => r.outcome === "failed" || r.outcome === "refused");
+        if (notStopped.length > 0) {
+          toast.warning(`Stopped ${stopped}; couldn't stop ${notStopped.map((r) => `pid ${r.pid}`).join(", ")}`, {
+            description: notStopped[0].detail,
+          });
+        } else {
+          toast.success(`Stopped ${stopped} background process${stopped === 1 ? "" : "es"}`);
+        }
+      } catch (e) {
+        // Leave the dialog open: the user can retry, keep them, or cancel.
+        toast.error(`Couldn't stop the background processes: ${e instanceof Error ? e.message : e}`);
+        setRestartAskBusy(false);
+        return;
+      }
+      setRestartAskBusy(false);
+    }
+    setRestartAsk(null);
+    void handleReopen();
+  }, [session?.id, handleReopen]);
+
   // Tracks whether this session has connected at least once, so we clear the
   // terminal only on RE-connects (not the first attach, which would wipe replayed
   // boot output). Reset when the session identity changes (a new PTY).
@@ -4350,8 +4403,8 @@ export function TerminalBlock({
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={handleReopen}
-                disabled={isCreatingSession || !session}
+                onClick={() => void handleUserRestart()}
+                disabled={isCreatingSession || restartChecking || !session}
                 className="gap-2"
               >
                 <RefreshCw className="w-3 h-3" />
@@ -4519,7 +4572,7 @@ export function TerminalBlock({
             <Button
               variant="secondary"
               size="sm"
-              onClick={handleReopen}
+              onClick={() => void handleUserRestart()}
               disabled={isCreatingSession}
               className="h-5 px-2 text-[10px] nodrag"
             >
@@ -4623,7 +4676,7 @@ export function TerminalBlock({
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={handleReopen}
+                    onClick={() => void handleUserRestart()}
                     isLoading={isCreatingSession}
                     leftIcon={<RefreshCw className="w-4 h-4" />}
                     style={{ pointerEvents: "auto" }}
@@ -4998,6 +5051,14 @@ export function TerminalBlock({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <RestartBackgroundDialog
+        open={restartAsk !== null}
+        terminalName={terminalName}
+        processes={restartAsk ?? []}
+        busy={restartAskBusy}
+        onRestart={(stop) => void handleRestartChoice(stop)}
+        onCancel={() => setRestartAsk(null)}
+      />
     </>
   );
 }
