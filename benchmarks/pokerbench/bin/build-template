@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v21-codex-no-daemon
+# REVISION: pokerbench-template-v22-antigravity
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -43,6 +43,17 @@ AGENT_TERMINALS = (
     ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
     ("Codex", "openai", 'exec codex --no-daemon ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
     ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust --include-directories /tmp/pokerbench'),
+    # Antigravity CLI (agy): Gemini CLI's successor for Google AI plans (Gemini CLI stopped
+    # serving them on 2026-06-18). Not in the sandbox image yet: it says how to install it.
+    # MODEL takes its model labels (`agy models`), e.g. "Gemini 4 Argon (Medium)". Its log
+    # goes to a file per terminal, which the helper reads for the model actually used.
+    ("Antigravity CLI", "antigravity",
+     'command -v agy >/dev/null || { echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:";'
+     ' echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin";'
+     ' echo "then restart this terminal."; exec bash; }\n'
+     'mkdir -p "$HOME/.gemini/antigravity-cli/log"\n'
+     'exec agy ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'
+     ' --log-file "$HOME/.gemini/antigravity-cli/log/seat-$ORCABOT_PTY_ID.log"'),
 )
 BOT_TERMINALS = (
     ("Claude Sonnet (API)", {"PLAYER": "api", "PROVIDER": "anthropic", "MODEL": "claude-sonnet-5-5", "EFFORT": ""}),
@@ -155,8 +166,8 @@ is what makes a component a player. Help the user set up a game, start it, watch
 and read the results.
 
 **Everything is already on the canvas** from the moment the dashboard opens: the
-engine terminal, the table (browser), three agent terminals (Claude Code, Codex, Gemini
-CLI), two bot terminals (Claude Sonnet (API), House bot) and an Agent block, all linked.
+engine terminal, the table (browser), four agent terminals (Claude Code, Codex, Gemini
+CLI, Antigravity CLI), two bot terminals (Claude Sonnet (API), House bot) and an Agent block, all linked.
 Never create, start, type into or delete components to set it up or start a game: the
 engine and the seats start by themselves, and Start on the table starts the agents. If
 list_items looks empty or incomplete, the dashboard is still loading: wait and look
@@ -167,7 +178,7 @@ How a game starts (tell the user this when they ask how to run it, or walk them
 through the dashboard):
 1. The **engine** terminal starts a table (a lobby) and seats every terminal and Agent
    block linked to it, each under its name on the canvas.
-2. The **agent terminals** (Claude Code, Codex, Gemini CLI) are normal agent terminals:
+2. The **agent terminals** (Claude Code, Codex, Gemini CLI, Antigravity CLI) are normal agent terminals:
    the user logs in to each one there as usual (or adds the provider's key in Orcabot's
    secrets and restarts it) and leaves it at its prompt. Until then the table says
    what it's waiting for ("log in in its terminal", "see its terminal").
@@ -250,13 +261,14 @@ def terminal(pid, name, boot, x, y, w, h, agentic):
 
 # The canvas: the table (browser) in the middle, each player next to where its seat is
 # on the table. The engine seats linked terminals in name order, then Agent blocks, and
-# the table deals seats clockwise from the bottom centre, so with all six players:
-# Claude Code bottom, Claude Sonnet (API) lower left, Codex upper left, Gemini CLI top,
-# House bot upper right, the Agent block lower right. (With the Agent block not linked,
-# the five terminals spread round the table a little differently.)
+# the table deals seats clockwise from the bottom centre, so with all seven players:
+# Antigravity CLI bottom, Claude Code bottom left, Claude Sonnet (API) lower left, Codex
+# upper left, Gemini CLI top, House bot upper right, the Agent block lower right. (With
+# the Agent block not linked, the terminals spread round the table a little differently.)
 BROWSER = (700, 440, 1240, 800)  # x, y, width, height
 SEAT_SPOTS = {  # canvas name -> (x, y) of the component
-    "Claude Code": (1040, 1300),          # bottom centre
+    "Antigravity CLI": (1040, 1300),      # bottom centre
+    "Claude Code": (300, 1300),           # bottom left
     "Claude Sonnet (API)": (80, 800),     # lower left
     "Codex": (80, 380),                   # upper left
     "Gemini CLI": (1040, 0),              # top centre

@@ -1,11 +1,11 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-players-v2-interactive-agents
+# REVISION: pokerbench-players-v3-antigravity
 """What plays in a seat.
 
 In Orcabot every player is a component linked to the engine terminal: an agent terminal
-(Claude Code, Codex or Gemini CLI, run interactively; the seat script's helper hands it
+(Claude Code, Codex, Gemini CLI or Antigravity CLI, run interactively; the seat script's helper hands it
 the prompt at Start), a bot terminal (a model through its API, or the house bot: which
 one, and its settings, can be chosen on the table page before the start), or an Agent
 block (always "agent").
@@ -18,26 +18,30 @@ from __future__ import annotations
 
 import re
 
-PLAYERS_REVISION = "pokerbench-players-v2-interactive-agents"
+PLAYERS_REVISION = "pokerbench-players-v3-antigravity"
 
 KINDS = {
     "claude-code": "Claude Code",
     "codex": "Codex",
     "gemini-cli": "Gemini CLI",
+    "antigravity-cli": "Antigravity CLI",
     "api": "Model via API",
     "house": "House bot",
     "agent": "Agent block",
 }
 # What a seat terminal can play. "agent" is an Agent block's only kind.
-TERMINAL_KINDS = ("claude-code", "codex", "gemini-cli", "api", "house")
+TERMINAL_KINDS = ("claude-code", "codex", "gemini-cli", "antigravity-cli", "api", "house")
 # An agent runs interactively in its own terminal (you log in there as usual), so a seat
 # is that agent for good; the table page can switch a bot seat between these.
-HARNESS_KINDS = ("claude-code", "codex", "gemini-cli")
+HARNESS_KINDS = ("claude-code", "codex", "gemini-cli", "antigravity-cli")
 BOT_KINDS = ("api", "house")
 PROVIDERS = ("anthropic", "openai", "gemini")
 STRATEGIES = ("tight", "random", "call")
 DEFAULT_API_MODEL = {"anthropic": "claude-opus-5-5"}  # the others need a model named
 MODEL_ID = re.compile(r"[A-Za-z0-9._:/@+-]{0,100}")
+# Antigravity CLI names its models by label ("Gemini 4 Argon (Medium)"): letters, digits,
+# single spaces and one parenthesised effort. REVISION: pokerbench-players-v3-antigravity
+MODEL_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?: [A-Za-z0-9._-]+)*(?: \([A-Za-z]+\))?")
 EFFORT = re.compile(r"[a-z]{0,16}")
 
 
@@ -55,9 +59,13 @@ def normalize(player: dict, *, allow_agent: bool = False) -> dict:
         raise PlayerError(f"kind must be one of {', '.join(kinds)}.")
     out: dict = {"kind": kind}
     model = player.get("model") or ""
-    if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
-        raise PlayerError("model: letters, digits and . _ : / @ + - only (up to 100).")
-    if kind in ("claude-code", "codex", "gemini-cli"):
+    if kind == "antigravity-cli" and isinstance(model, str) and model and len(model) <= 100 \
+            and MODEL_LABEL.fullmatch(model):
+        pass
+    elif not isinstance(model, str) or not MODEL_ID.fullmatch(model):
+        raise PlayerError("model: letters, digits and . _ : / @ + - only (up to 100); "
+                          "Antigravity CLI also takes its labels, e.g. Gemini 4 Argon (Medium).")
+    if kind in HARNESS_KINDS:
         if model:
             out["model"] = model
     elif kind == "api":

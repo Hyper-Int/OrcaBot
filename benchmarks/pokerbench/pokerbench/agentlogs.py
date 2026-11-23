@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-agentlogs-v1
+# REVISION: pokerbench-agentlogs-v2-antigravity
 """Which model an agent terminal's agent actually used, from the agent's own logs.
 
 The seat's label says only "anthropic/claude-code": the agent picks its model itself
@@ -17,6 +17,11 @@ Read from what each agent writes for every request or turn, from the game's star
   cli_version.
 - Gemini CLI: ~/.gemini/tmp/*/chats/session-*.jsonl, "gemini" lines: model. Its version
   from the installed package.
+- Antigravity CLI (agy): its log, which the seat's boot command puts at
+  ~/.gemini/antigravity-cli/log/seat-$ORCABOT_PTY_ID.log (--log-file; else its own cli-*.log
+  files, shared by every agy on the VM). Each streamGenerateContent request counts for the
+  model last selected ('label="Gemini 4 Argon (Medium)"' or "Resolving model ..."): the model
+  is the label, the effort its parenthesis. Its conversations are protobuf in SQLite.
 
 Self-reported by the seat, like its label: a seat could misreport. Standard library only:
 the engine publishes it for seats as seat_agentlogs.py.
@@ -30,12 +35,14 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 
-AGENTLOGS_REVISION = "pokerbench-agentlogs-v1"
+AGENTLOGS_REVISION = "pokerbench-agentlogs-v2-antigravity"
 
 MAX_FILES = 40
 MAX_LINES = 200_000
@@ -145,7 +152,64 @@ def gemini_cli(home: str, since: float) -> dict:
     return {"models": dict(models), "unit": "responses", "effort": None, "version": _package_version("gemini")}
 
 
-READERS = {"claude-code": claude_code, "codex": codex, "gemini-cli": gemini_cli}
+_GLOG = re.compile(r"^[IWEF](\d\d)(\d\d) (\d\d):(\d\d):(\d\d)(?:\.\d+)?\s")
+_AGY_MODEL = re.compile(r'selected model override to backend: label="([^"]+)"|Resolving model (.+?)\s*$')
+_AGY_EFFORT = re.compile(r"^(.*\S)\s*\(([A-Za-z]+)\)$")
+
+
+def _glog_ts(line: str, year: int) -> float | None:
+    """glog's "I1123 14:16:30.834 ..." (no year; the VM's clock is UTC)."""
+    m = _GLOG.match(line)
+    if not m:
+        return None
+    mo, d, h, mi, sec = (int(x) for x in m.groups())
+    try:
+        return datetime(year, mo, d, h, mi, sec, tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def antigravity_cli(home: str, since: float, pty_id: str | None = None) -> dict:
+    logdir = os.path.join(home, ".gemini", "antigravity-cli", "log")
+    pty_id = pty_id if pty_id is not None else os.environ.get("ORCABOT_PTY_ID", "")
+    own = os.path.join(logdir, f"seat-{pty_id}.log") if pty_id else ""
+    files = [own] if own and os.path.isfile(own) else _recent(os.path.join(logdir, "cli-*.log"), since)
+    year = datetime.fromtimestamp(since, timezone.utc).year
+    models, efforts = Counter(), Counter()
+    for path in files:
+        current = None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f):
+                    if i >= MAX_LINES:
+                        break
+                    m = _AGY_MODEL.search(line)
+                    if m:
+                        current = (m.group(1) or m.group(2)).strip()
+                        continue
+                    if ":streamGenerateContent" not in line:
+                        continue
+                    ts = _glog_ts(line, year)
+                    if ts is None or ts < since:
+                        continue
+                    label = current or "unknown"
+                    e = _AGY_EFFORT.match(label)
+                    models[e.group(1) if e else label] += 1
+                    efforts[e.group(2).lower() if e else "default"] += 1
+        except OSError:
+            continue
+    version = None
+    exe = shutil.which("agy")
+    if exe:
+        try:
+            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+            version = out.splitlines()[0][:40] if out else None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {"models": dict(models), "unit": "requests", "effort": _effort(efforts), "version": version}
+
+
+READERS = {"claude-code": claude_code, "codex": codex, "gemini-cli": gemini_cli, "antigravity-cli": antigravity_cli}
 
 
 def read(agent: str, home: str, since: float) -> dict:

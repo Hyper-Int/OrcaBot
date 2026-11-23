@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v7-codex-no-daemon
+# REVISION: pokerbench-seat-v8-antigravity
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -17,7 +17,7 @@
 #     exec bash /tmp/pokerbench/seat.sh helper anthropic ) >/dev/null 2>&1 &
 #   exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions
 #
-#   The helper (vendor: anthropic | openai | google) checks the seat in once the agent is
+#   The helper (vendor: anthropic | openai | google | antigravity) checks the seat in once the agent is
 #   signed in and at its prompt (until then the table page says what's missing), and at
 #   Start types the poker prompt into this terminal (Orcabot's self-input). The agent
 #   plays through the `poker` command, which finds its seat from the link. Its name is
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v7-codex-no-daemon
+REVISION=pokerbench-seat-v8-antigravity
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -71,9 +71,9 @@ setup() {
   python3 -c 'import json,shlex,sys
 d=json.loads(sys.argv[1]); p=d.get("player") or {}
 kind=p.get("kind","")
-names={"claude-code":"Claude Code","codex":"Codex","gemini-cli":"Gemini CLI","house":"House bot","agent":"Agent block"}
+names={"claude-code":"Claude Code","codex":"Codex","gemini-cli":"Gemini CLI","antigravity-cli":"Antigravity CLI","house":"House bot","agent":"Agent block"}
 label={"api":"%s/%s (API)"%(p.get("provider"),p.get("model"))}.get(kind) or names.get(kind,kind)
-if kind in ("claude-code","codex","gemini-cli") and p.get("model"): label+=" (%s)"%p["model"]
+if kind in ("claude-code","codex","gemini-cli","antigravity-cli") and p.get("model"): label+=" (%s)"%p["model"]
 v={"P_KIND":kind,"P_MODEL":p.get("model",""),"P_PROVIDER":p.get("provider",""),"P_EFFORT":p.get("effort",""),
    "P_STRATEGY":p.get("strategy","tight"),"P_REV":d.get("rev",0),"P_STATUS":d.get("status",""),
    "P_IN":"1" if d.get("in_game") else "0","P_LABEL":label}
@@ -139,6 +139,18 @@ check() {
     gemini-cli)
       [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.gemini/oauth_creds.json" ] \
         || { NEED="Gemini CLI isn't signed in"; HOWTO="type gemini and choose Sign in with Google, then /quit"; KEY=GEMINI_API_KEY; } ;;
+    antigravity-cli)
+      # Antigravity CLI (agy): not in the sandbox image yet. Its Google sign-in lands in a
+      # 0600 file when there is no keyring (Orcabot's VMs); an API key needs modelProvider
+      # "gemini" in its settings too; AGY_ADC_AUTH uses Google Cloud credentials.
+      if ! command -v agy >/dev/null 2>&1; then
+        NEED="Antigravity CLI (agy) isn't installed on this VM: in a terminal, run curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin, then restart this one"
+      elif [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] || [ "${AGY_ADC_AUTH:-}" = true ] \
+        || { [ -n "${GEMINI_API_KEY:-}" ] && grep -qs '"modelProvider"[[:space:]]*:[[:space:]]*"gemini"' "$HOME/.gemini/antigravity-cli/settings.json"; }; then
+        :
+      else
+        NEED="Antigravity CLI isn't signed in"; HOWTO="type agy, choose Google OAuth and sign in, then /quit"
+      fi ;;
     api)
       case "$P_PROVIDER" in anthropic) KEY=ANTHROPIC_API_KEY;; openai) KEY=OPENAI_API_KEY;; *) KEY=GEMINI_API_KEY;; esac
       [ -n "${!KEY:-}" ] || NEED="$P_LABEL needs an API key" ;;
@@ -153,6 +165,7 @@ info() {  # how the seat introduces itself (table page, report)
     claude-code) echo "anthropic/claude-code${P_MODEL:+ ($P_MODEL)}" ;;
     codex) echo "openai/codex${P_MODEL:+ ($P_MODEL)}" ;;
     gemini-cli) echo "google/gemini-cli${P_MODEL:+ ($P_MODEL)}" ;;
+    antigravity-cli) echo "google/antigravity-cli${P_MODEL:+ ($P_MODEL)}" ;;
     api) echo "$P_PROVIDER/$P_MODEL (API)" ;;
     house) echo "house/bot ($P_STRATEGY)" ;;
   esac
@@ -216,7 +229,8 @@ if [ "$MODE" = helper ]; then
     anthropic) PLAYER=claude-code; CLEAR=/clear ;;
     openai) PLAYER=codex; CLEAR=/new ;;
     google) PLAYER=gemini-cli; CLEAR=/clear ;;
-    *) echo "seat.sh helper: vendor must be anthropic, openai or google"; exit 2 ;;
+    antigravity) PLAYER=antigravity-cli; CLEAR=/clear ;;
+    *) echo "seat.sh helper: vendor must be anthropic, openai, google or antigravity"; exit 2 ;;
   esac
   export PLAYER
 fi

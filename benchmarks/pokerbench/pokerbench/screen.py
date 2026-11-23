@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-screen-v2-gemini-key-dialog
+# REVISION: pokerbench-screen-v3-antigravity
 """What an agent terminal shows right now, from its raw recent output.
 
 A seat's helper asks Orcabot for its own terminal's raw output (/screen: the last 64KB
@@ -26,7 +26,7 @@ import argparse
 import re
 import sys
 
-SCREEN_REVISION = "pokerbench-screen-v2-gemini-key-dialog"
+SCREEN_REVISION = "pokerbench-screen-v3-antigravity"
 
 # Setup screens of Claude Code, Codex and Gemini CLI that wait for the user. While one is
 # on the screen, a pasted prompt would land in it.
@@ -44,6 +44,9 @@ QUESTIONS = (
     # its key-entry dialog, which "Use Gemini API Key" can open even with GEMINI_API_KEY set:
     # a prompt pasted there is saved as the key (2026-11-22 game: Gemini never got its prompt)
     "enter gemini api key", "paste your api key here",
+    # Antigravity CLI (agy): its login menu and sign-in code prompt, and its trust prompt
+    "use a google cloud project", "paste the authorization code", "enter the authorization code",
+    "open this url in your local browser", "do you trust the contents of this project",
     # any
     "press enter to continue",
 )

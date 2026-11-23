@@ -288,8 +288,8 @@ The dashboard:
   from this repo (reinstalling when REF's commit changes) and runs
   [`bin/table-engine`](bin/table-engine), which is versioned with the code, so most
   changes need no reseeding.
-- three **agent** terminals, each linked to the engine: Claude Code, Codex and Gemini
-  CLI. Each starts its agent interactively, like any Orcabot agent terminal, with the
+- four **agent** terminals, each linked to the engine: Claude Code, Codex, Gemini CLI
+  and Antigravity CLI. Each starts its agent interactively, like any Orcabot agent terminal, with the
   seat helper quietly in the background:
 
   ```
@@ -323,6 +323,17 @@ The dashboard:
   the terminal's boot command and restart it.
 - two **bot** terminals, linked to the engine: Claude Sonnet (API) and House bot. They
   run `seat.sh` in the foreground with defaults the table page can change:
+
+  **Antigravity CLI** (`agy`) is Gemini CLI's successor for Google AI Pro/Ultra plans
+  (Gemini CLI stopped serving them on 2026-06-18; it still works with a paid API key). It
+  isn't in the sandbox image yet: the terminal says how to install it
+  (`curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin`).
+  Sign in once (`agy`, Google OAuth: open the link, paste the code back); on a VM without
+  a keyring it keeps the token in `~/.gemini/antigravity-cli/antigravity-oauth-token`, on
+  the workspace volume, so every agy terminal shares it and it survives restarts. `MODEL=`
+  takes its model labels (`agy models`, e.g. `Gemini 4 Argon (Medium)`). Each seat logs to
+  its own file (`--log-file .../log/seat-$ORCABOT_PTY_ID.log`), from which the helper reads
+  the model actually used; between games it sends `/clear`.
 
   ```
   PLAYER=api              # api | house

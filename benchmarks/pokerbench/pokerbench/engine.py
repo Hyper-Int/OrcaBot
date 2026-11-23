@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v17-agent-models
+# REVISION: pokerbench-engine-v18-antigravity
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v17-agent-models"
+ENGINE_REVISION = "pokerbench-engine-v18-antigravity"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -126,7 +126,8 @@ SETTINGS_LIMITS = {"hands": (1, 10_000), "level_hands": (1, 1_000), "turn_timeou
                    "seed": (0, 2**31 - 1)}
 
 
-_NAME = re.compile(r"[^\w.:/@+()-]")
+# Spaces too: Antigravity CLI names models by label ("Gemini 4 Argon").
+_NAME = re.compile(r"[^\w.:/@+() -]")
 
 
 def clean_agent_info(info) -> dict:
@@ -650,7 +651,7 @@ class Match:
         self.reported_info: dict[str, str] = {}
         # What an agent terminal's agent actually ran on, read by its seat helper from the
         # agent's own logs (agentlogs.py): {"models": {name: count}, "unit", "effort",
-        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v17-agent-models
+        # "version"}. Self-reported, like the label. REVISION: pokerbench-engine-v18-antigravity
         self.agent_info: dict[str, dict] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
         # What plays in each seat ({"kind": "claude-code", "model": ...}, players.py), chosen

@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v17-fair-play -->
+<!-- REVISION: pokerbench-spectator-v18-antigravity -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -270,8 +270,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v17-fair-play
-console.log(`[spectator] REVISION: pokerbench-spectator-v17-fair-play loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v18-antigravity
+console.log(`[spectator] REVISION: pokerbench-spectator-v18-antigravity loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -591,10 +591,10 @@ function renderPlayer() {
   let f = "";
   const seg = (key, opts) => `<div class="seg" data-pkey="${key}" role="group">${opts.map(([v, t]) =>
     `<button type="button" data-v="${v}" class="${draft[key] === v ? "on" : ""}" aria-pressed="${draft[key] === v}">${esc(t)}</button>`).join("")}</div>`;
-  if (["claude-code", "codex", "gemini-cli"].includes(draft.kind)) {
+  if (["claude-code", "codex", "gemini-cli", "antigravity-cli"].includes(draft.kind)) {
     f = `<label class="field wide"><span class="flabel">Model</span>
       <input data-pkey="model" value="${esc(draft.model)}" placeholder="blank: the agent's default" autocomplete="off" spellcheck="false">
-      <small>Whatever the agent's own model flag takes (${draft.kind === "codex" ? "codex -m" : draft.kind === "gemini-cli" ? "gemini -m" : "claude --model"}).</small></label>`;
+      <small>Whatever the agent's own model flag takes (${draft.kind === "codex" ? "codex -m" : draft.kind === "gemini-cli" ? "gemini -m" : draft.kind === "antigravity-cli" ? "agy --model; see agy models" : "claude --model"}).</small></label>`;
   } else if (draft.kind === "api") {
     f = `<div class="field"><span class="flabel">Provider</span>${seg("provider", [["anthropic", "Anthropic"], ["openai", "OpenAI"], ["gemini", "Gemini"]])}</div>
       <label class="field"><span class="flabel">Model</span>
