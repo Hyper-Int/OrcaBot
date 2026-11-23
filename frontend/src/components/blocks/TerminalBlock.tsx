@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v16-rename
-const TERMINAL_BLOCK_REVISION = "terminal-block-v16-rename";
+// REVISION: terminal-block-v17-antigravity
+const TERMINAL_BLOCK_REVISION = "terminal-block-v17-antigravity";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -2006,7 +2006,7 @@ export function TerminalBlock({
         if (connectionFlowRef.current && event.lastMessage) {
           const AGENT_PREFIX: Record<string, string> = {
             "claude-code": "Claude", gemini: "Gemini", codex: "Codex",
-            opencode: "OpenCode", droid: "Droid", openclaw: "OpenClaw",
+            opencode: "OpenCode", droid: "Droid", openclaw: "OpenClaw", antigravity: "Antigravity",
           };
           const prefix = AGENT_PREFIX[event.agent];
           const text = prefix ? `${prefix}: ${event.lastMessage}` : event.lastMessage;
@@ -4259,7 +4259,7 @@ export function TerminalBlock({
           {(isClaudeSession || isAgentic) && (
             <>
               {/* Agents button - hidden for Gemini, Codex, and OpenClaw */}
-              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && (
+              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && terminalType !== "antigravity" && (
                 <button
                   type="button"
                   onClick={() => setShowAttachedList((prev) => !prev)}
@@ -4520,7 +4520,7 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && (
+              {terminalType !== "gemini" && terminalType !== "codex" && terminalType !== "moltbot" && terminalType !== "antigravity" && (
                 <DropdownMenuItem onClick={() => setActivePanel(activePanel === "subagents" ? null : "subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
                   <span>Agents</span>

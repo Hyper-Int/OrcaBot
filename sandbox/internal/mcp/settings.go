@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: settings-v7-wrapper-command
+// REVISION: settings-v8-antigravity
 
 // Package mcp provides MCP (Model Context Protocol) settings generation
 // for agentic coders running in the sandbox.
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const settingsRevision = "settings-v7-wrapper-command"
+const settingsRevision = "settings-v8-antigravity"
 
 func init() {
 	log.Printf("[mcp/settings] REVISION: %s loaded at %s", settingsRevision, time.Now().Format(time.RFC3339))
@@ -55,9 +55,11 @@ const (
 	AgentTypeOpenCode AgentType = "opencode"
 	AgentTypeGemini   AgentType = "gemini"
 	AgentTypeCodex    AgentType = "codex"
-	AgentTypeDroid   AgentType = "droid"
-	AgentTypeMoltbot AgentType = "moltbot"
-	AgentTypeUnknown  AgentType = ""
+	AgentTypeDroid    AgentType = "droid"
+	AgentTypeMoltbot  AgentType = "moltbot"
+	// Antigravity CLI (`agy`), Gemini CLI's successor for Google AI plans.
+	AgentTypeAntigravity AgentType = "antigravity"
+	AgentTypeUnknown     AgentType = ""
 )
 
 // DetectAgentType determines which agent is being launched from the command string.
@@ -71,6 +73,9 @@ func DetectAgentType(command string) AgentType {
 	// Check if command contains the agent name as a word (not substring)
 	// Order matters: check more specific names first to avoid false matches
 	switch {
+	// agy first: a script that launches it may name other agents (an echo, a comment).
+	case containsWord(cmd, "agy"):
+		return AgentTypeAntigravity
 	case containsWord(cmd, "openclaw") || containsWord(cmd, "moltbot") ||
 		containsWord(cmd, "molt") || containsWord(cmd, "clawdbot"):
 		return AgentTypeMoltbot
@@ -136,6 +141,8 @@ func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userToo
 		return generateDroidSettings(workspaceRoot, servers)
 	case AgentTypeMoltbot:
 		return generateMoltbotSettings(workspaceRoot, servers)
+	case AgentTypeAntigravity:
+		return generateAntigravitySettings(workspaceRoot, servers)
 	default:
 		return nil
 	}
@@ -636,6 +643,55 @@ func generateDroidSettings(workspaceRoot string, servers map[string]MCPServerCon
 		return err
 	}
 
+	return os.WriteFile(configPath, data, 0644)
+}
+
+// generateAntigravitySettings writes MCP servers to {workspaceRoot}/.agents/mcp_config.json,
+// Antigravity CLI's workspace MCP config (its global one is ~/.gemini/config/mcp_config.json;
+// it loads both). Local servers: command/args/env; remote ones: serverUrl (Streamable HTTP
+// only). Existing servers are kept; ours take precedence.
+// REVISION: settings-v8-antigravity
+func generateAntigravitySettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
+	dir := filepath.Join(workspaceRoot, ".agents")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	configPath := filepath.Join(dir, "mcp_config.json")
+
+	var config map[string]interface{}
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			config = nil
+		}
+	}
+	if config == nil {
+		config = make(map[string]interface{})
+	}
+	existing, _ := config["mcpServers"].(map[string]interface{})
+	if existing == nil {
+		existing = make(map[string]interface{})
+	}
+	for name, server := range servers {
+		entry := map[string]interface{}{}
+		if server.URL != "" {
+			entry["serverUrl"] = server.URL
+		} else {
+			entry["command"] = server.Command
+			if len(server.Args) > 0 {
+				entry["args"] = server.Args
+			}
+			if len(server.Env) > 0 {
+				entry["env"] = server.Env
+			}
+		}
+		existing[name] = entry
+	}
+	config["mcpServers"] = existing
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(configPath, data, 0644)
 }
 

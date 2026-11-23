@@ -1,6 +1,6 @@
 // REVISION: agent-icons-v2-detect-from-script
 import { describe, expect, it } from "vitest";
-import { getAgentType } from "./agent-icons";
+import { getAgentDisplayName, getAgentIconSrc, getAgentType } from "./agent-icons";
 
 // PokerBench's Codex seat: comments mention other agents; the agent is on the exec line.
 const CODEX_SEAT = `# ===== PokerBench seat: an agent terminal like any other =====
@@ -26,6 +26,15 @@ describe("getAgentType", () => {
     expect(getAgentType(undefined, "Gemini CLI 2")).toBe("gemini");
     expect(getAgentType("bash", "Claude Code-opus")).toBe("claude");
     expect(getAgentType(undefined, "Codexify")).toBe("shell"); // not a prefix match
+  });
+
+  it("knows Antigravity CLI (agy)", () => {
+    expect(getAgentType("agy", "Terminal")).toBe("antigravity");
+    const seat = 'command -v agy >/dev/null || { echo "not installed"; exec bash; }\nexec agy --model "$MODEL" --dangerously-skip-permissions';
+    expect(getAgentType(seat, "Argon")).toBe("antigravity");
+    expect(getAgentType(undefined, "Antigravity CLI 2")).toBe("antigravity");
+    expect(getAgentIconSrc("antigravity")).toBe("/icons/antigravity.svg");
+    expect(getAgentDisplayName("antigravity")).toBe("Antigravity CLI");
   });
 
   it("a plain shell stays a shell", () => {

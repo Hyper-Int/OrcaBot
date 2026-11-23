@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v36-recover-on-same-vm
-const sessionsRevision = "sessions-v36-recover-on-same-vm";
+// REVISION: sessions-v37-antigravity
+const sessionsRevision = "sessions-v37-antigravity";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -181,6 +181,9 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
         bootCommand += ' --dangerously-bypass-approvals-and-sandbox';
       } else if (cmd === 'gemini' || cmd.startsWith('gemini ')) {
         bootCommand += ' --approval-mode=yolo';
+      } else if (cmd === 'agy' || cmd.startsWith('agy ')) {
+        // Antigravity CLI. REVISION: sessions-v37-antigravity
+        bootCommand += ' --dangerously-skip-permissions';
       }
     }
 

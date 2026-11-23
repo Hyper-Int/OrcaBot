@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v62-copy-paste-blocks
-console.log(`[dashboard] REVISION: dashboard-v62-copy-paste-blocks loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v63-antigravity
+console.log(`[dashboard] REVISION: dashboard-v63-antigravity loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -248,6 +248,16 @@ const terminalTools: BlockTool[] = [
     label: "Gemini CLI",
     icon: <img src="/icons/gemini.ico" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "gemini", agentic: true },
+  },
+  // Antigravity CLI (agy): Gemini CLI's successor for Google AI Pro/Ultra plans. Sign in
+  // in the terminal (Google OAuth: open the link, paste the code back).
+  // REVISION: dashboard-v63-antigravity
+  {
+    id: "antigravity-cli",
+    type: "terminal",
+    label: "Antigravity CLI",
+    icon: <img src="/icons/antigravity.svg" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "agy", agentic: true },
   },
   {
     id: "codex",

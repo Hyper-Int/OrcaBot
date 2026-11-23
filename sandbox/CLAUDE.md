@@ -452,7 +452,7 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 Claude Code, Gemini CLI, and Codex CLI are preinstalled in the sandbox image.
 Agents run as CLI processes inside PTYs.
 
-**Supported agents:** Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
+**Supported agents:** Claude Code, Gemini CLI, Antigravity CLI (`agy`), OpenCode, Codex, Droid, OpenClaw
 
 **Agent control signals:**
 - **Pause**: `SIGSTOP`

@@ -1,7 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: attachments-v3-skip-empty-mcp-write
+// REVISION: attachments-v4-antigravity
+const attachmentsRevision = "attachments-v4-antigravity";
+console.log(`[attachments] REVISION: ${attachmentsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from "../types";
 import { isDesktopFeatureDisabledError } from "../storage/drive-cache";
@@ -53,6 +55,8 @@ const TERMINAL_PATHS: Record<string, { skills: string | null; agents: string | n
   droid: { skills: "/.factory/skills", agents: "/.factory/droids" },
   openclaw: { skills: "/.openclaw/skills", agents: null },
   moltbot: { skills: "/.openclaw/skills", agents: null },
+  // Antigravity CLI reads workspace skills from .agents/skills/.
+  antigravity: { skills: "/.agents/skills", agents: null },
 };
 
 class AttachmentError extends Error {
@@ -302,6 +306,17 @@ function generateDroidSettingsJson(servers: Record<string, McpServerConfig>): st
   return JSON.stringify({ mcpServers }, null, 2);
 }
 
+// Antigravity CLI: local servers as command/args/env, remote ones by serverUrl (Streamable HTTP).
+function generateAntigravitySettingsJson(servers: Record<string, McpServerConfig>): string {
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers)) {
+    mcpServers[name] = server.url
+      ? { serverUrl: server.url }
+      : { command: server.command || "", args: server.args || [], ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}) };
+  }
+  return JSON.stringify({ mcpServers }, null, 2);
+}
+
 type MpcSettingsFileSpec = { path: string; content: string; contentType: string };
 
 // Write user MCP tools to override/system config paths that agents don't overwrite on startup.
@@ -313,6 +328,11 @@ const MCP_SETTINGS_BY_TERMINAL: Record<string, (servers: Record<string, McpServe
   gemini: (servers) => ({ path: "/.orcabot/gemini-system-settings.json", content: generateGeminiSettingsJson(servers), contentType: "application/json" }),
   codex: (servers) => ({ path: "/etc/codex/config.toml", content: generateCodexConfigToml(servers), contentType: "application/toml" }),
   droid: (servers) => ({ path: "/.factory/mcp.json", content: generateDroidSettingsJson(servers), contentType: "application/json" }),
+  // Antigravity CLI loads its global config (~/.gemini/config/mcp_config.json, HOME being
+  // /workspace/.home) and the workspace one (.agents/mcp_config.json, where the sandbox
+  // puts the Orcabot server): user tools go in the global one, so neither overwrites the
+  // other. REVISION: attachments-v4-antigravity
+  antigravity: (servers) => ({ path: "/.home/.gemini/config/mcp_config.json", content: generateAntigravitySettingsJson(servers), contentType: "application/json" }),
 };
 
 async function writeMcpSettings(

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: agent-icons-v2-detect-from-script
-const MODULE_REVISION = "agent-icons-v2-detect-from-script";
+// REVISION: agent-icons-v3-antigravity
+const MODULE_REVISION = "agent-icons-v3-antigravity";
 console.log(`[agent-icons] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -16,6 +16,7 @@ export type AgentType =
   | "opencode"
   | "droid"
   | "moltbot"
+  | "antigravity"
   | "shell";
 
 const BOOT_COMMAND_MAP: Record<string, AgentType> = {
@@ -26,6 +27,7 @@ const BOOT_COMMAND_MAP: Record<string, AgentType> = {
   droid: "droid",
   openclaw: "moltbot",
   moltbot: "moltbot",
+  agy: "antigravity", // Antigravity CLI. REVISION: agent-icons-v3-antigravity
 };
 
 const NAME_MAP: Record<string, AgentType> = {
@@ -36,6 +38,7 @@ const NAME_MAP: Record<string, AgentType> = {
   Droid: "droid",
   OpenClaw: "moltbot",
   Moltbot: "moltbot",
+  "Antigravity CLI": "antigravity",
 };
 
 /**
@@ -80,6 +83,7 @@ const ICON_SRC_MAP: Record<AgentType, string | null> = {
   opencode: "/icons/opencode.ico",
   droid: "/icons/droid.png",
   moltbot: "/icons/moltbot.png",
+  antigravity: "/icons/antigravity.svg",
   shell: null,
 };
 
@@ -95,6 +99,7 @@ const DISPLAY_NAME_MAP: Record<AgentType, string> = {
   opencode: "OpenCode",
   droid: "Droid",
   moltbot: "OpenClaw",
+  antigravity: "Antigravity CLI",
   shell: "Terminal",
 };
 

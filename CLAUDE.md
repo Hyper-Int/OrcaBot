@@ -212,7 +212,8 @@ LLM (in sandbox PTY)
 When an LLM agent (Claude, Gemini, etc.) finishes a turn, stop hooks notify the
 sandbox so it can broadcast `agent_stopped` WebSocket events to all connected clients.
 - Hook scripts: `sandbox/internal/agenthooks/hooks.go`
-- Supported agents: Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
+- Supported agents: Claude Code, Gemini CLI, Antigravity CLI (`agy`), OpenCode, Codex, Droid, OpenClaw
+- Antigravity CLI (Gemini CLI's successor for Google AI Pro/Ultra plans, which Gemini CLI stopped serving on 2026-06-18): installed in the image (`/usr/local/bin/agy`, self-updating); sign-in is Google OAuth in the terminal (open the link, paste the code), and with no keyring on the VM its token lands in `~/.gemini/antigravity-cli/antigravity-oauth-token` on the workspace volume. Orcabot's MCP server goes in `.agents/mcp_config.json`, users' MCP tools in `~/.gemini/config/mcp_config.json`, the Stop hook in `.agents/hooks.json`
 - Settings files generated per-agent (`.claude/settings.json`, `.gemini/settings.json`, etc.)
 - **All hooks must include `X-MCP-Secret` header** from `ORCABOT_MCP_SECRET` env var — unauthenticated hook callbacks are rejected
 

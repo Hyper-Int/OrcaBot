@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hooks-v5-unix-socket-api-key
+// REVISION: hooks-v6-antigravity
 
 package agenthooks
 
@@ -17,7 +17,7 @@ import (
 )
 
 // REVISION: hooks-v5-unix-socket-api-key
-const agentHooksRevision = "hooks-v5-unix-socket-api-key"
+const agentHooksRevision = "hooks-v6-antigravity"
 
 var agentHooksRevisionLogOnce sync.Once
 
@@ -54,6 +54,8 @@ func GenerateHooksForAgent(workspaceRoot string, agentType mcp.AgentType, sessio
 		return generateDroidHooks(workspaceRoot, hooksDir)
 	case mcp.AgentTypeCodex:
 		return generateCodexHooks(workspaceRoot, hooksDir)
+	case mcp.AgentTypeAntigravity:
+		return generateAntigravityHooks(workspaceRoot, hooksDir)
 	default:
 		return nil
 	}
@@ -1052,6 +1054,68 @@ fi
 		return err
 	}
 	return os.WriteFile(settingsPath, data, 0644)
+}
+
+// generateAntigravityHooks creates a Stop hook for Antigravity CLI (agy) in its workspace
+// hooks file, {workspaceRoot}/.agents/hooks.json (hooks in its settings.json aren't loaded).
+// Format: {"<hook name>": {"<Event>": [{"type": "command", "command": ..., "timeout": s}]}};
+// Stop fires when its execution loop ends. The hook gets JSON on stdin (conversationId,
+// modelName, transcriptPath, ...) and the PTY's environment.
+// REVISION: hooks-v6-antigravity
+func generateAntigravityHooks(workspaceRoot, hooksDir string) error {
+	scriptPath := filepath.Join(hooksDir, "antigravity-stop.sh")
+	script := `#!/bin/bash
+# Antigravity CLI (agy) Stop hook
+# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
+# REVISION: hooks-v6-antigravity
+SOCK="/run/orcabot/privileged.sock"
+PORT="${MCP_LOCAL_PORT:-8081}"
+SECRET="${ORCABOT_MCP_SECRET:-}"
+INPUT=$(cat)
+MODEL=$(echo "$INPUT" | jq -r '.modelName // empty' 2>/dev/null | head -c 200)
+LAST_MSG="Agent completed${MODEL:+ ($MODEL)}"
+BODY="{\"agent\":\"antigravity\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+if [ -S "$SOCK" ]; then
+    curl -sX POST --unix-socket "$SOCK" http://x/agent-stopped \
+      -H "Content-Type: application/json" \
+      -d "$BODY" >/dev/null
+else
+    curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
+      -H "Content-Type: application/json" \
+      -H "X-MCP-Secret: $SECRET" \
+      -d "$BODY" >/dev/null
+fi
+echo '{}'
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		return fmt.Errorf("failed to write antigravity hook script: %w", err)
+	}
+
+	dir := filepath.Join(workspaceRoot, ".agents")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	hooksPath := filepath.Join(dir, "hooks.json")
+	var hooks map[string]interface{}
+	if data, err := os.ReadFile(hooksPath); err == nil {
+		if err := json.Unmarshal(data, &hooks); err != nil {
+			hooks = nil
+		}
+	}
+	if hooks == nil {
+		hooks = make(map[string]interface{})
+	}
+	// Our own named hook: rewritten each time, the user's hooks left alone.
+	hooks["orcabot-stop"] = map[string]interface{}{
+		"Stop": []interface{}{
+			map[string]interface{}{"type": "command", "command": scriptPath, "timeout": 10},
+		},
+	}
+	data, err := json.MarshalIndent(hooks, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(hooksPath, data, 0644)
 }
 
 // generateCodexHooks creates notify hook for Codex CLI

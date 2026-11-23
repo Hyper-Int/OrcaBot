@@ -128,8 +128,28 @@ RUN npm cache clean --force && npm install -g @openai/codex@latest
 # Install Gemini CLI (Google)
 RUN npm cache clean --force && npm install -g @google/gemini-cli@latest
 
+# Install Antigravity CLI (Google, `agy`): Gemini CLI's successor for Google AI Pro/Ultra
+# plans (Gemini CLI stopped serving them on 2026-06-18). Google's installer
+# (https://antigravity.google/cli/install.sh) reads a manifest from its update server,
+# downloads the build and checks its SHA-512; these are its steps, without its last one
+# (`agy install`, which edits shell profiles). The binary goes to /usr/local/bin; agy
+# updates itself there when it runs. Sign-in: run `agy` once (Google OAuth, paste the
+# code); with no keyring it keeps the token under ~/.gemini/antigravity-cli on /workspace.
+# REVISION: antigravity-cli-v1-image
+RUN set -eu; \
+    base=https://antigravity-cli-auto-updater-974169037036.us-central1.run.app; \
+    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) echo "unsupported arch" >&2; exit 1;; esac; \
+    m=$(curl -fsSL "$base/manifests/linux_${arch}.json"); \
+    get() { echo "$m" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }; \
+    url=$(get url); sha=$(get sha512); test -n "$url" && test -n "$sha"; \
+    d=$(mktemp -d); \
+    case "$url" in *.tar.gz*) curl -fsSL -o "$d/p" "$url"; echo "$sha  $d/p" | sha512sum -c -; tar -xzf "$d/p" -C "$d" antigravity; b="$d/antigravity";; \
+                   *) curl -fsSL -o "$d/agy" "$url"; echo "$sha  $d/agy" | sha512sum -c -; b="$d/agy";; esac; \
+    install -m 0755 "$b" /usr/local/bin/agy; rm -rf "$d"; \
+    agy --version
+
 # --- Agents ---
-# Installed: Claude Code, Gemini CLI, Codex CLI, OpenCode.
+# Installed: Claude Code, Gemini CLI, Antigravity CLI, Codex CLI, OpenCode.
 # OpenCode re-enabled for benchmark harnesses (slop-code-bench drives it for
 # OpenRouter models, e.g. Kimi). Droid and OpenClaw stay disabled to save space.
 

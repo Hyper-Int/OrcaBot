@@ -1,5 +1,5 @@
 {
-  "revision": "egress-defaults-v5-ad-attribution-denylist",
+  "revision": "egress-defaults-v6-antigravity-cli",
   "defaults": [
     {
       "pattern": "registry.npmjs.org",
@@ -798,6 +798,18 @@
       "category": "integration",
       "label": "X developer",
       "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "antigravity.google",
+      "category": "llm_api",
+      "label": "Antigravity CLI",
+      "rationale": "Google's Antigravity CLI (agy): installer, docs and sign-in pages"
+    },
+    {
+      "pattern": "antigravity-cli-auto-updater-974169037036.us-central1.run.app",
+      "category": "llm_api",
+      "label": "Antigravity CLI updates",
+      "rationale": "agy's release manifest and self-update server (this exact host, not *.run.app)"
     }
   ],
   "trackers": [
