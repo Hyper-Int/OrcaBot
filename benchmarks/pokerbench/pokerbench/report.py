@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v17-stalls
+# REVISION: pokerbench-report-v18-conduct
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -18,9 +18,10 @@ from pathlib import Path
 
 from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
+from .conduct import counted_decisions, invalid_summary, seat_conduct
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v17-stalls"
+REPORT_REVISION = "pokerbench-report-v18-conduct"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -288,9 +289,7 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
     integrity = _jsonl(run_dir / "integrity.jsonl")
     # A resumed game deals the hand that was in progress again: the decisions made in it
     # before the restart don't count (the hand never finished; its chips went back).
-    resumes = [e for e in events if e["type"] == "resumed"]
-    decisions = [d for d in decisions
-                 if not any(d.get("hand", 0) >= e["next_hand"] and d["ts"] < e["ts"] for e in resumes)]
+    decisions = counted_decisions(decisions, events)
 
     by_seat = defaultdict(list)
     for d in decisions:
@@ -329,7 +328,9 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
             "decisions": len(ds),
             "actions": dict(Counter(d["action"] for d in ds)),
             "timeouts": sum(1 for d in ds if d["timed_out"]),
-            "invalid_actions": sum(1 for e in events if e["type"] == "invalid_action" and e["seat"] == seat),
+            # Moves refused (by error) and decisions on cards it didn't hold (conduct.py).
+            # REVISION: pokerbench-report-v18-conduct
+            **seat_conduct(seat, ds, events),
             "reasons_given_pct": round(100 * sum(1 for d in ds if d.get("reason")) / len(ds), 1) if ds else None,
             "latency_median_s": lat[len(lat) // 2] if lat else None,
             "latency_p90_s": lat[int(len(lat) * 0.9)] if lat else None,
@@ -497,7 +498,7 @@ def render_md(rep: dict) -> str:
         auto = (f"yes, from hand {a['from_hand']} ({int(a['fast_share'] * 100)}% sub-second, "
                 f"reason diversity {a['reason_diversity']})" if a.get("suspected") else "no")
         lines.append(f"| {seat} | {s['decisions']} | {s['vpip_pct']} | {s['pfr_pct']} | {s['aggression_factor']} "
-                     f"| {s['latency_median_s']} | {s['latency_p90_s']} | {s['timeouts']} | {s['invalid_actions']} "
+                     f"| {s['latency_median_s']} | {s['latency_p90_s']} | {s['timeouts']} | {invalid_summary(s)} "
                      f"| {len(s['off_api_requests'])} | {auto} |")
     stalled = [(seat, s["stalls"]) for seat, s in rep["seats"].items() if s.get("stalls") and (
         s["stalls"]["longest_timeout_run"] >= 2 or s["stalls"]["terminal_restarts"] or s["stalls"]["prompt_retyped"])]
@@ -513,6 +514,18 @@ def render_md(rep: dict) -> str:
             restarts = ", ".join(str(x) for x in st["terminal_restarts"]) or "–"
             lines.append(f"| {seat} | {rep['seats'][seat]['timeouts']} | {run} | {st['sat_out']} | {restarts} "
                          f"| {st['prompt_retyped']} |")
+    phantom = [(seat, s) for seat, s in rep["seats"].items() if s.get("phantom_hands")]
+    if phantom:
+        lines += ["", "## Decisions on cards it didn't hold", "",
+                  "Preflop decisions whose reason names a starting hand (\"K7o\") when nothing in it matches "
+                  "the seat's own cards: it acted on a hand it imagined, without looking. The engine accepted "
+                  "these (they came on the seat's turn); most such moves arrive out of turn and are refused, "
+                  "counted under Invalid above.", "",
+                  "| Seat | Decisions | Of its preflop decisions | Examples (hand: held, named, action) |",
+                  "|---|---:|---:|---|"]
+        for seat, s in phantom:
+            ex = "; ".join(f"{x['hand']}: {x['held']}, \"{x['named']}\", {x['action']}" for x in s["phantom_examples"])
+            lines.append(f"| {seat} | {s['phantom_hands']} | {s['phantom_hands']}/{s['preflop_decisions']} | {ex} |")
     if rep.get("operator_notes"):
         lines += ["", "## Operator notes", ""]
         for n in rep["operator_notes"]:

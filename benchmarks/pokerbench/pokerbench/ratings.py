@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-ratings-v1
+# REVISION: pokerbench-ratings-v2-conduct
 """Skill ratings across many games.
 
 Reads result folders (one per game: run.json, hand_results.jsonl, report.json,
@@ -35,7 +35,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-RATINGS_REVISION = "pokerbench-ratings-v1"
+from .conduct import counted_decisions, seat_conduct
+
+RATINGS_REVISION = "pokerbench-ratings-v2-conduct"
 log = logging.getLogger("pokerbench.ratings")
 log.info("[ratings] REVISION: %s loaded at %s", RATINGS_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -66,6 +68,8 @@ class Game:
     series: dict | None = None  # {"id", "game", "games", "rotation", "seed"}
     standings: list[tuple[str, int]] = field(default_factory=list)  # tournaments: (seat, place)
     notes: list[str] = field(default_factory=list)
+    # seat -> conduct.seat_conduct (invalid moves, phantom-hand decisions). REVISION: pokerbench-ratings-v2-conduct
+    conduct: dict[str, dict] = field(default_factory=dict)
 
     @property
     def variant(self) -> str:
@@ -224,6 +228,11 @@ def load_game(path: Path, overrides: dict | None = None) -> Game | None:
                 started_at=run.get("started_at") or "", status=run.get("status") or "unknown",
                 finish_reason=run.get("finish_reason"), big_blind=big_blind, entrants=entrants,
                 hands=hands, series=series_info(run), notes=notes)
+    events = _read_jsonl(path / "events.jsonl")
+    decisions = counted_decisions(_read_jsonl(path / "decisions.jsonl"), events)
+    for seat in entrants:
+        mine = [d for d in decisions if d.get("seat") == seat]
+        game.conduct[seat] = {**seat_conduct(seat, mine, events), "decisions": len(mine)}
     if fmt == "tournament":
         game.standings = tournament_standings(run, _read_json(path / "report.json"),
                                               _read_jsonl(path / "events.jsonl"), raw)
@@ -572,6 +581,42 @@ def _tournament_rated(g: Game) -> str | None:
     return None
 
 
+# -- conduct ---------------------------------------------------------------------
+
+def conduct_totals(games: list[Game]) -> list[dict]:
+    """Per entrant across ``games``: decisions, invalid moves (by error) and preflop
+    decisions on a hand it didn't hold (conduct.py). Not part of any rating."""
+    # A seat named differently in some games of a series (its effort reported in one game
+    # only) counts under its most common name there, as in the ratings (cash_units).
+    votes: dict[tuple, Counter] = defaultdict(Counter)
+    for g in games:
+        unit = f"series:{g.series['id']}:{g.series.get('seed')}" if g.series else f"game:{g.id}"
+        for seat, e in g.entrants.items():
+            votes[(unit, seat)][e] += sum(1 for h in g.hands if seat in h["net"]) or 1
+    named = {k: sorted(v.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] for k, v in votes.items()}
+    tot: dict[str, dict] = {}
+    for g in games:
+        unit = f"series:{g.series['id']}:{g.series.get('seed')}" if g.series else f"game:{g.id}"
+        for seat, c in g.conduct.items():
+            e = named.get((unit, seat)) if seat in g.entrants else None
+            if e is None:
+                continue
+            t = tot.setdefault(e, {"entrant": e, "games": 0, "decisions": 0, "invalid_actions": 0,
+                                   "not_your_turn": 0, "preflop_decisions": 0, "phantom_hands": 0})
+            t["games"] += 1
+            t["decisions"] += c.get("decisions", 0)
+            t["invalid_actions"] += c.get("invalid_actions", 0)
+            t["not_your_turn"] += (c.get("invalid_by_error") or {}).get("not_your_turn", 0)
+            t["preflop_decisions"] += c.get("preflop_decisions", 0)
+            t["phantom_hands"] += c.get("phantom_hands", 0)
+    rows = list(tot.values())
+    for r in rows:
+        r["invalid_per_100"] = round(100 * r["invalid_actions"] / r["decisions"], 1) if r["decisions"] else None
+        r["phantom_pct"] = round(100 * r["phantom_hands"] / r["preflop_decisions"], 1) if r["preflop_decisions"] else None
+    rows.sort(key=lambda r: (-r["invalid_actions"] - r["phantom_hands"], r["entrant"]))
+    return rows
+
+
 # -- everything ------------------------------------------------------------------
 
 def compute_ratings(games: list[Game], n_boot: int = 1000, seed: int = 0, prior: float = 1.0) -> dict:
@@ -600,6 +645,7 @@ def compute_ratings(games: list[Game], n_boot: int = 1000, seed: int = 0, prior:
             entry["games"] = [g.id for g in rated]
             entry["hand_limit_finishes"] = [g.id for g in rated if g.finish_reason == "hand_limit"]
             entry["plackett_luce"] = tournament_ratings(rated)
+        entry["conduct"] = conduct_totals(vg)
         variants[key] = entry
     return {
         "revision": RATINGS_REVISION,
@@ -617,6 +663,25 @@ def compute_ratings(games: list[Game], n_boot: int = 1000, seed: int = 0, prior:
 
 def _ci(pair, fmt="{:+.1f}") -> str:
     return "n/a" if pair is None else f"[{fmt.format(pair[0])}, {fmt.format(pair[1])}]"
+
+
+def _conduct_md(rows: list[dict]) -> list[str]:
+    """The conduct table: how cleanly each entrant played, separate from how well."""
+    if not rows:
+        return []
+    out = ["### Conduct (not part of any rating)", "",
+           "Invalid: moves the engine refused, mostly sent when it wasn't the seat's turn. Phantom hands: "
+           "preflop decisions whose reason names a hand it didn't hold (\"folding K7o\" holding K4), "
+           "so it acted without looking; the engine accepted these. Both come from the game folders.", "",
+           "| Entrant | games | decisions | invalid | of them not its turn | per 100 decisions | "
+           "phantom hands | of preflop decisions |",
+           "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    for r in rows:
+        per = "-" if r["invalid_per_100"] is None else f"{r['invalid_per_100']:.1f}"
+        pct = "-" if r["phantom_pct"] is None else f"{r['phantom_pct']:.1f}%"
+        out.append(f"| {r['entrant']} | {r['games']} | {r['decisions']} | {r['invalid_actions']} | "
+                   f"{r['not_your_turn']} | {per} | {r['phantom_hands']} | {pct} |")
+    return out + [""]
 
 
 def render_markdown(result: dict) -> str:
@@ -666,6 +731,7 @@ def render_markdown(result: dict) -> str:
             out += ["", "Avg finish: 100% = won every time, 0% = always last."
                     + (f" {single} of {len(pl)} entrants have played a single tournament: their rating is "
                        "mostly prior (sigma barely moved)." if single else ""), ""]
+        out += _conduct_md(v.get("conduct") or [])
     out += ["## Games", "", "| Game | Variant | Status | Hands | Series | Entrants |", "|---|---|---|---:|---|---|"]
     for g in result["games"]:
         s = g["series"]
