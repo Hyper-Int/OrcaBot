@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v10-seat-users
+# REVISION: pokerbench-seat-v13-own-login
 """An agent seat runs as its own OS user with a private home (seat.sh agent), so agents
 can't read each other's live transcripts (hole cards, reasoning) or the engine's files:
 every Orcabot terminal is root with one shared HOME. Each start archives the seat's
@@ -89,6 +89,25 @@ class SeatUserTests(unittest.TestCase):
         self.assertEqual(len(archived), 1)
         self.assertEqual(oct((self.root / "archive").stat().st_mode & 0o777), "0o700")
         self.assertEqual((self.shared / ".claude/.credentials.json").read_text(), '{"token": "refreshed by the seat"}')
+
+    def test_a_seat_keeps_its_own_login(self):
+        # Two seats logged in separately must never end up sharing one login: copies of one
+        # OAuth login renewing on their own cancel each other's.
+        creds = self.shared / ".claude/.credentials.json"
+        creds.parent.mkdir(parents=True)
+        creds.write_text('{"token": "shared, older"}')
+        for pty, seat in (("pty-1", "sonnet"), ("pty-2", "fable")):
+            own = self.root / "seats" / seat / ".claude/.credentials.json"
+            own.parent.mkdir(parents=True)
+            own.write_text(json.dumps({"token": f"{seat}'s own"}))
+        time.sleep(1.1)
+        creds.write_text('{"token": "shared, newer"}')
+        self.launch("anthropic", "claude", pty="pty-1")
+        self.launch("anthropic", "claude", pty="pty-2")
+        for seat in ("sonnet", "fable"):
+            got = (self.root / "seats" / seat / ".claude/.credentials.json").read_text()
+            self.assertEqual(got, json.dumps({"token": f"{seat}'s own"}))
+        self.assertEqual(creds.read_text(), '{"token": "shared, newer"}')
 
     def test_antigravity_gets_its_own_log_file(self):
         tok = self.shared / ".gemini/antigravity-cli/antigravity-oauth-token"

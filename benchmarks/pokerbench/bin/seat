@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v12-prompt-check
+# REVISION: pokerbench-seat-v13-own-login
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v12-prompt-check
+REVISION=pokerbench-seat-v13-own-login
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -404,7 +404,13 @@ PY
     done
   }
 
-  # The login. Credentials: newer wins, both ways. Setup state: copied in if the seat lacks it.
+  # The login. A seat keeps its own once it has one: one without a login is seeded from the
+  # shared login, and the shared home is seeded from a seat's only when it has none. Never
+  # "newer wins": several agents renewing copies of one OAuth login cancel each other's
+  # (a refresh replaces the refresh token, so the other copies stop working), and passing
+  # the newest copy around at every game start spread one login to every seat of a vendor.
+  # On 2026-11-24 every Claude seat was logged out within a minute, mid-game.
+  # Setup state: copied in if the seat lacks it. REVISION: pokerbench-seat-v13-own-login
   case "$VENDOR" in
     anthropic) CREDS=".claude/.credentials.json"; SETUP=".claude.json .claude/settings.json" ;;
     openai) CREDS=".codex/auth.json"; SETUP=".codex/config.toml .codex/version.json" ;;
@@ -414,12 +420,14 @@ PY
   sync_login() {
     local p
     for p in $CREDS; do
-      if [ -s "$H/$p" ] && { [ ! -e "$SHARED_HOME/$p" ] || [ "$H/$p" -nt "$SHARED_HOME/$p" ]; }; then
+      if [ -s "$H/$p" ]; then
+        [ -s "$SHARED_HOME/$p" ] && continue  # its own login: left alone
         mkdir -p "$(dirname "$SHARED_HOME/$p")" && cp "$H/$p" "$SHARED_HOME/$p.pokerbench" \
           && chmod 600 "$SHARED_HOME/$p.pokerbench" && mv "$SHARED_HOME/$p.pokerbench" "$SHARED_HOME/$p"
-        echo "[seat] seat $SEAT's newer ${p##*/} handed back to the shared login" >&2
-      elif [ -s "$SHARED_HOME/$p" ] && { [ ! -e "$H/$p" ] || [ "$SHARED_HOME/$p" -nt "$H/$p" ]; }; then
+        echo "[seat] seat $SEAT's ${p##*/} seeds the shared login (it had none)" >&2
+      elif [ -s "$SHARED_HOME/$p" ]; then
         mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"
+        echo "[seat] seat $SEAT has no ${p##*/}: given a copy of the shared login (log in here for its own)" >&2
       fi
     done
     for p in $SETUP; do
