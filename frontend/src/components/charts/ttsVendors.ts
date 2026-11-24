@@ -16,6 +16,12 @@
 // whose model is being measured. It implies no endorsement; these are the
 // authors of the models tested, not partners.
 
+// REVISION: tts-vendors-v2-openmoss
+const MODULE_REVISION = "tts-vendors-v2-openmoss";
+if (typeof window !== "undefined") {
+  console.log(`[tts-vendors] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+}
+
 export interface Vendor {
   name: string;
   icon: string;
@@ -52,6 +58,7 @@ export const VENDORS: Vendor[] = [
   { name: "IndexTeam", icon: "index-tts.png", url: "https://github.com/index-tts/index-tts" },
   { name: "Fish Audio", icon: "fishaudio.png", url: "https://github.com/fishaudio/fish-speech" },
   { name: "nineninesix", icon: "nineninesix-ai.png", url: "https://github.com/nineninesix-ai/kani-tts" },
+  { name: "OpenMOSS", icon: "OpenMOSS.png", url: "https://github.com/OpenMOSS/MOSS-TTS-Nano" },
   // StyleTTS2 is one author rather than an organisation, and was missing from
   // this list long before the three above it - the chips were never checked
   // against the table's own rows until now.

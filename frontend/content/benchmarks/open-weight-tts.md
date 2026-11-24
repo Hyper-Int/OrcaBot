@@ -48,7 +48,7 @@ face value.
   **x̄ _t_**, the mean compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for thirty-four of the forty-nine
+  `medium.en` was run too, but it did not finish for thirty-four of the fifty-two
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones, so the true spread between engines is **wider** than this column
@@ -56,8 +56,8 @@ face value.
 - **PESQ** is a no-reference perceptual quality estimate from torchaudio's SQUIM, scored on
   the sample in the first column. It is a second axis word error cannot see, because word
   error saturates once speech is merely intelligible. It measures signal quality, not
-  naturalness: 2E and Qwen3-TTS sit within 0.01 of each other while sounding clearly
-  different.
+  naturalness: Qwen3-TTS and KittenTTS Nano sit within 0.01 of each other, a 0.6B
+  autoregressive model and a 54M deterministic one that sound nothing alike.
 - **Class** describes the architecture. `det-ff` is a single forward pass with a
   deterministic duration predictor, so timing is identical every run and it cannot
   hallucinate. `st-ff` is the same shape with sampling inside, so output length varies.

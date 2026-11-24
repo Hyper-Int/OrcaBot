@@ -11,13 +11,13 @@
 //
 // The x-axis is LOGARITHMIC, which the on-page chart's is not, and that is the
 // one deliberate difference between them. The page fixes x at 6.8s because that
-// covers the engines that keep up with real time. Ten of the thirty rated
-// engines are slower than that -- Bark, Zonos and CSM by a wide margin, up to
-// 51s a phrase -- so on a 6.8s axis they are drawn off-canvas rather than
-// clipped or dropped. A card is a single glance with no filter controls and no
-// hover, so it has to show every point it counts: log x fits 0.12s and 51s in
-// one frame, and the flatness of the cloud across two and a half decades is the
-// finding.
+// covers the engines that keep up with real time. Twelve of the thirty-nine
+// rated engines are slower than that -- Dots-TTS and the two Orpheus builds by a
+// wide margin, up to 50s a phrase -- so on a 6.8s axis they are drawn off-canvas
+// rather than clipped or dropped. A card is a single glance with no filter
+// controls and no hover, so it has to show every point it counts: log x fits
+// 0.12s and 50s in one frame, and the flatness of the cloud across two and a
+// half decades is the finding.
 //
 // Usage:
 //   node scripts/build-og-tts.mjs                 # live scores from the API
