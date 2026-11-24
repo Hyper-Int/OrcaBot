@@ -134,6 +134,9 @@ const LICENCE_PROOF_URLS = {
   "chatterbox-q4": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
   "chatterbox-q8": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
   "chatterbox-turbo": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+  // Nano is the same repository and the same MIT LICENSE as the rows above it:
+  // a smaller T3 over the MeanFlow S3Gen that chatterbox-turbo already uses.
+  "chatterbox-nano": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
   "cosyvoice3": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE",
   "cosyvoice3-rl": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE",
   "csm": "https://github.com/SesameAILabs/csm/blob/main/LICENSE",
@@ -189,6 +192,13 @@ const LICENCE_PROOF_URLS = {
   "vibevoice-1.5b": "https://huggingface.co/microsoft/VibeVoice-1.5B/blob/main/README.md",
   "xtts": "https://huggingface.co/coqui/XTTS-v2/blob/main/LICENSE.txt",
   "zonos": "https://github.com/Zyphra/Zonos/blob/main/LICENSE",
+  // ZONOS3-Mini is its own checkpoint rather than a build of the Zonos repo, and
+  // its weights repo carries no LICENSE file - only the card's apache-2.0
+  // declaration - so the card is the proof, as it is for F5-TTS.
+  "zonos3": "https://huggingface.co/Zyphra/ZONOS3-Mini",
+  // Card and repo agree at Apache-2.0 here, so the LICENSE file is the stronger
+  // artefact of the two.
+  "moss-tts-nano": "https://github.com/OpenMOSS/MOSS-TTS-Nano/blob/main/LICENSE",
 };
 
 /** Where each model actually lives. Kept here rather than in the export, which
@@ -211,6 +221,7 @@ const MODEL_URLS = {
   "chatterbox-turbo": "https://github.com/resemble-ai/chatterbox",
   "chatterbox-q4": "https://github.com/resemble-ai/chatterbox",
   "chatterbox-q8": "https://github.com/resemble-ai/chatterbox",
+  "chatterbox-nano": "https://github.com/resemble-ai/chatterbox",
   "styletts2": "https://github.com/yl4579/StyleTTS2",
   "melotts": "https://github.com/myshell-ai/MeloTTS",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts",
@@ -220,6 +231,11 @@ const MODEL_URLS = {
   "kittentts-nano-int8": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8",
   "csm": "https://github.com/SesameAILabs/csm",
   "zonos": "https://github.com/Zyphra/Zonos",
+  // Points at the checkpoint, not the Zonos family repo: ZONOS3-Mini is a
+  // different architecture (a latent mixture of 64 experts) and the GGUFs this
+  // row was measured on are published there.
+  "zonos3": "https://huggingface.co/Zyphra/ZONOS3-Mini",
+  "moss-tts-nano": "https://github.com/OpenMOSS/MOSS-TTS-Nano",
   "fastpitch": "https://github.com/NVIDIA-NeMo/Speech",
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS",
   // VoiceDesign has its own checkpoint, so it points at that rather than at the
@@ -326,6 +342,7 @@ const DISPLAY = {
   "chatterbox-q4": "Chatterbox Q4",
   "chatterbox-q8": "Chatterbox Q8",
   "chatterbox-turbo": "Chatterbox Turbo",
+  "chatterbox-nano": "Chatterbox Nano",
   "cosyvoice3": "CosyVoice3",
   "cosyvoice3-rl": "CosyVoice3 RL",
   "csm": "CSM",
@@ -365,6 +382,10 @@ const DISPLAY = {
   "vibevoice": "VibeVoice",
   "vibevoice-1.5b": "VibeVoice 1.5B",
   "zonos": "Zonos",
+  // Zyphra's own capitalisation on the model card, which distinguishes the new
+  // checkpoint from the "Zonos" row above rather than reading as the same model.
+  "zonos3": "ZONOS3 Mini",
+  "moss-tts-nano": "MOSS-TTS Nano",
   "bananamind-tts": "BananaMind TTS",
   "mms-tts": "MMS-TTS",
   // No verifiable model card for these three (licence reads "?"), so they get

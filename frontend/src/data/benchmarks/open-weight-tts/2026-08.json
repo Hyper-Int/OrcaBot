@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-09-03",
+  "label": "2026-11-24",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -421,6 +421,107 @@
         {
           "v": "The most accurate KittenTTS here at 43 MB. Non-autoregressive, so no sampling and no runaways.",
           "sort": "The most accurate KittenTTS here at 43 M",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox-nano",
+      "display": "Chatterbox Nano",
+      "group": "",
+      "sample": "chatterbox-nano.mp3?v=769d7361",
+      "cells": [
+        {
+          "v": "Chatterbox Nano",
+          "sort": "chatterbox-nano",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "110M",
+          "sort": "110.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-04",
+          "sort": "202604",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "679 MB",
+          "sort": "679.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "708 MB",
+          "sort": "708.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.1 GB",
+          "sort": "1126.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0472",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.86",
+          "sort": "3.86",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.33x",
+          "sort": "1.3253",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.18s",
+          "sort": "4.1765",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Resemble's 110M GPT-2-small T3 over the same MeanFlow S3Gen as chatterbox-turbo, both at q8_0, with its baked default voice. 4.7% WER and PESQ 3.86 at 679 MB of weights, against turbo's 980 MB; 1.33x real time. Runs on crispasr 0.8.55, not the 0.8.25 the other crispasr rows used.",
+          "sort": "Resemble's 110M GPT-2-small T3 over the ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3559,6 +3660,107 @@
       ]
     },
     {
+      "config": "zonos3",
+      "display": "ZONOS3 Mini",
+      "group": "",
+      "sample": "zonos3.mp3?v=339b586d",
+      "cells": [
+        {
+          "v": "ZONOS3 Mini",
+          "sort": "zonos3",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Zyphra/ZONOS3-Mini"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Zyphra/ZONOS3-Mini"
+        },
+        {
+          "v": "800M",
+          "sort": "800.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-11",
+          "sort": "202611",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.0 GB",
+          "sort": "1024.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.1 GB",
+          "sort": "1126.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "12%",
+          "sort": "0.1171",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.86",
+          "sort": "3.86",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.16x",
+          "sort": "0.1631",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.67s",
+          "sort": "0.6658",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Zyphra ZONOS3-Mini: 800M parameters, about 100M active per token through a latent mixture of 64 experts. Zyphra's own GGUFs with the smaller zac-keep2 codec and a preset speaker (Savannah, American), not a clone. 0.16x real time and PESQ 3.86, but 11.7% WER: the edge category passed 6 of 12. Runs on crispasr 0.8.55, not the 0.8.25 the other crispasr rows used.",
+          "sort": "Zyphra ZONOS3-Mini: 800M parameters, abo",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "chatterbox-q4",
       "display": "Chatterbox Q4",
       "group": "",
@@ -3855,6 +4057,107 @@
         {
           "v": "198 MB of weights in a 3 GB install; 774 MB is a Japanese dictionary.",
           "sort": "198 MB of weights in a 3 GB install; 774",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "moss-tts-nano",
+      "display": "MOSS-TTS Nano",
+      "group": "",
+      "sample": "moss-tts-nano.mp3?v=16c97cbf",
+      "cells": [
+        {
+          "v": "MOSS-TTS Nano",
+          "sort": "moss-tts-nano",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/OpenMOSS/MOSS-TTS-Nano"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/OpenMOSS/MOSS-TTS-Nano/blob/main/LICENSE"
+        },
+        {
+          "v": "0.1B",
+          "sort": "100.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-04",
+          "sort": "202604",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "308 MB",
+          "sort": "308.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1017 MB",
+          "sort": "1017.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.0 GB",
+          "sort": "1024.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "13%",
+          "sort": "0.1301",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.89",
+          "sort": "3.89",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.97x",
+          "sort": "0.9726",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.98s",
+          "sort": "3.9803",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "OpenMOSS MOSS-TTS-Nano: a 0.1B autoregressive model over its own 20M-parameter MOSS-Audio-Tokenizer-Nano, 48 kHz stereo downmixed to mono. OpenMOSS's PyTorch code in its own venv on CPU, where it runs at 0.97x; MPS was three times slower. Clones from the piper sample, its recommended mode. Samples, so WER moves between passes: 13.0% here, 9.0% and 12.5% in two others.",
+          "sort": "OpenMOSS MOSS-TTS-Nano: a 0.1B autoregre",
           "tone": "",
           "align": "",
           "restricted": false

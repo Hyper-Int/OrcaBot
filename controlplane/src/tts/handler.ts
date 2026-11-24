@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: tts-ballots-v3-balanced-selection
+// REVISION: tts-ballots-v4-fifty-two-configs
 
 import type { Env } from '../types';
 
-const MODULE_REVISION = 'tts-ballots-v3-balanced-selection';
+const MODULE_REVISION = 'tts-ballots-v4-fifty-two-configs';
 console.log(`[tts] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /** The run these ballots score. Bumped when a new TTS run replaces the samples. */
@@ -21,16 +21,17 @@ const RUN = '2026-08';
  * reader can complete and the server is then obliged to reject.
  */
 const CONFIGS = [
-  'supertonic', 'piper', 'indextts', 'kittentts-micro', 'chatterbox-turbo',
-  'fish-s2-pro', 'kittentts-nano-int8', 'qwen3-tts-vd', 'kittentts-mini',
-  'dots-tts', 'qwen3-tts', 'pocket-tts', 'nt-2e-q8-metal', 'kittentts-nano',
-  'f5-tts', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16', 'dots-tts-mf',
-  'dots-soar-acpp', 'kokoro', 'magpie-f32', 'magpie-q4_k', 'magpie-q8_0',
-  'chatterbox', 'orpheus-q4', 'orpheus-q8', 'voxcpm2-tts', 'xtts',
-  'nt-2e-fp32-mps', 'kani-tts', 'chatterbox-q8', 'vibevoice',
-  'nt-2e-q4-metal', 'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts',
-  'omnivoice', 'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm',
-  'tada-1b', 'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
+  'supertonic', 'piper', 'indextts', 'kittentts-micro', 'chatterbox-nano',
+  'chatterbox-turbo', 'fish-s2-pro', 'kittentts-nano-int8', 'qwen3-tts-vd',
+  'kittentts-mini', 'dots-tts', 'qwen3-tts', 'pocket-tts', 'nt-2e-q8-metal',
+  'kittentts-nano', 'f5-tts', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16',
+  'dots-tts-mf', 'dots-soar-acpp', 'kokoro', 'magpie-f32', 'magpie-q4_k',
+  'magpie-q8_0', 'chatterbox', 'orpheus-q4', 'orpheus-q8', 'voxcpm2-tts',
+  'xtts', 'nt-2e-fp32-mps', 'kani-tts', 'chatterbox-q8', 'vibevoice',
+  'nt-2e-q4-metal', 'cosyvoice3-rl', 'zonos3', 'chatterbox-q4', 'styletts2',
+  'melotts', 'moss-tts-nano', 'omnivoice', 'cosyvoice3', 'bananamind-tts',
+  'tada-3b', 'zonos', 'csm', 'tada-1b', 'speecht5', 'mms-tts',
+  'vibevoice-1.5b', 'bark',
 ] as const;
 
 /**
