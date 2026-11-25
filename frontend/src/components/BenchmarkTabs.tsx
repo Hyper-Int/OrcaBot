@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: benchmark-tabs-v1
+// REVISION: benchmark-tabs-v2-pokerbench
 // Switches between benchmarks. The tabs are real links to each benchmark's own
 // URL rather than client-side state, so every benchmark stays deep-linkable,
 // keeps its own social card, and renders exactly one post per page (which is
@@ -9,7 +9,7 @@
 
 import Link from "next/link";
 
-const MODULE_REVISION = "benchmark-tabs-v1";
+const MODULE_REVISION = "benchmark-tabs-v2-pokerbench";
 console.log(`[benchmark-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /** Display order and labels. Slugs match content/benchmarks/<slug>.md.
@@ -19,6 +19,7 @@ console.log(`[benchmark-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date(
 export const BENCHMARK_TABS = [
   { slug: "agent-skills", label: "Agent Skills" },
   { slug: "open-weight-tts", label: "Open Weight TTS" },
+  { slug: "pokerbench", label: "PokerBench" },
 ] as const;
 
 export function BenchmarkTabs({ active }: { active: string }) {

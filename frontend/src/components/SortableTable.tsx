@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: sortable-table-v1
+// REVISION: sortable-table-v2-preview-rows
 // Makes markdown tables sortable by clicking a column header.
 //
 // It renders from the hast node rather than re-using react-markdown's rendered
@@ -11,10 +11,13 @@
 // nodes, so the row order cannot be rearranged. The hast node is plain
 // serialisable data, so the client can reorder rows AND still render the inline
 // formatting the cells contain (bold, italic, code, links).
+//
+// previewRows: show only the first N rows (of the current sort) until the reader
+// expands it; a ```table fence with `preview: N` sets it (benchmarks page).
 
 import * as React from "react";
 
-const MODULE_REVISION = "sortable-table-v1";
+const MODULE_REVISION = "sortable-table-v2-preview-rows";
 if (typeof window !== "undefined") {
   console.log(`[sortable-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -88,13 +91,15 @@ const alignOf = (n: HastNode): React.CSSProperties => {
   return a ? { textAlign: a as React.CSSProperties["textAlign"] } : {};
 };
 
-export function SortableTable({ node }: { node: HastNode }) {
+export function SortableTable({ node, previewRows }: { node: HastNode; previewRows?: number }) {
   const thead = els(node, "thead")[0];
   const tbody = els(node, "tbody")[0];
   const headCells = els(els(thead, "tr")[0], "th");
   const bodyRows = els(tbody, "tr");
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(null);
+  const [expanded, setExpanded] = React.useState(false);
+  const cropped = Boolean(previewRows && !expanded && bodyRows.length > previewRows);
 
   const rows = React.useMemo(() => {
     const indexed = bodyRows.map((r, i) => ({ r, i }));
@@ -126,8 +131,10 @@ export function SortableTable({ node }: { node: HastNode }) {
     });
   };
 
-  return (
-    <table>
+  const shown = cropped ? rows.slice(0, previewRows) : rows;
+
+  const table = (
+    <table style={cropped ? { marginBottom: 0 } : undefined}>
       <thead>
         <tr>
           {headCells.map((th, i) => {
@@ -170,8 +177,8 @@ export function SortableTable({ node }: { node: HastNode }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map(({ r, i }) => (
-          <tr key={i}>
+        {shown.map(({ r, i }, n) => (
+          <tr key={i} style={cropped && n === shown.length - 1 ? { opacity: 0.45 } : undefined}>
             {els(r, "td").map((td, j) => (
               <td key={j} style={alignOf(td)}>
                 <Inline nodes={td.children ?? []} />
@@ -181,5 +188,29 @@ export function SortableTable({ node }: { node: HastNode }) {
         ))}
       </tbody>
     </table>
+  );
+  if (!previewRows || bodyRows.length <= previewRows) return table;
+  return (
+    <div>
+      {table}
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
+        style={{
+          display: "block",
+          margin: "0.5rem 0 1.5rem",
+          padding: "0.3rem 0.8rem",
+          borderRadius: 999,
+          border: "1px solid var(--border)",
+          background: "transparent",
+          color: "var(--foreground-muted)",
+          fontSize: "0.8rem",
+          cursor: "pointer",
+        }}
+      >
+        {expanded ? "Show fewer" : `Show all ${bodyRows.length} rows`}
+      </button>
+    </div>
   );
 }

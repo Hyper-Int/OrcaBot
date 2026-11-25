@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: benchmarks-v1-post
+// REVISION: benchmarks-v2-table-fence
 
 import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
@@ -22,6 +22,25 @@ function isChartFence(className?: string): boolean {
   return typeof className === "string" && className.split(" ").includes("language-chart");
 }
 
+/** A ```table fence: a markdown table that starts cropped. Its first line may be
+ *  `preview: N` (rows shown until the reader expands it); the rest is the table. */
+function isTableFence(className?: string): boolean {
+  return typeof className === "string" && className.split(" ").includes("language-table");
+}
+
+function TableFence({ source }: { source: string }) {
+  const m = /^\s*preview:\s*(\d+)\s*\n/.exec(source);
+  const body = m ? source.slice(m[0].length) : source;
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{ table: ({ node }) => <SortableTable node={node as never} previewRows={m ? Number(m[1]) : undefined} /> }}
+    >
+      {body}
+    </ReactMarkdown>
+  );
+}
+
 /** The fence language of a <pre>'s <code> child, as a class string. hast keeps
  *  className as an array, which isChartFence does not accept. */
 function fenceLanguageOf(node: unknown): string {
@@ -34,7 +53,7 @@ function fenceLanguageOf(node: unknown): string {
   return Array.isArray(cls) ? cls.join(" ") : typeof cls === "string" ? cls : "";
 }
 
-const MODULE_REVISION = "benchmarks-v1-post";
+const MODULE_REVISION = "benchmarks-v2-table-fence";
 console.log(`[benchmarks-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 type Props = { params: Promise<{ slug: string }> };
@@ -239,7 +258,8 @@ export default async function BenchmarkPage({ params }: Props) {
             // wrapped in <pre>: `white-space: pre` inherits into the chart and
             // stops captions and labels wrapping, running them off the page.
             pre({ node, children, ...props }) {
-              if (isChartFence(fenceLanguageOf(node))) return <>{children}</>;
+              const lang = fenceLanguageOf(node);
+              if (isChartFence(lang) || isTableFence(lang)) return <>{children}</>;
               return <pre {...props}>{children}</pre>;
             },
             // `node` is react-markdown's hast node; strip it so it never lands
@@ -247,6 +267,9 @@ export default async function BenchmarkPage({ params }: Props) {
             code({ className, children, node: _node, ...props }) {
               if (isChartFence(className)) {
                 return <MarkdownChart id={String(children).trim()} />;
+              }
+              if (isTableFence(className)) {
+                return <TableFence source={String(children)} />;
               }
               return (
                 <code className={className} {...props}>
