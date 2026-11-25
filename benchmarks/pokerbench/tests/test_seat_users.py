@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v13-own-login
+# REVISION: pokerbench-seat-v15-agent-info-per-game
 """An agent seat runs as its own OS user with a private home (seat.sh agent), so agents
 can't read each other's live transcripts (hole cards, reasoning) or the engine's files:
 every Orcabot terminal is root with one shared HOME. Each start archives the seat's
@@ -10,6 +10,7 @@ home. Run here without root: a fake setpriv records what would run."""
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -108,6 +109,37 @@ class SeatUserTests(unittest.TestCase):
             got = (self.root / "seats" / seat / ".claude/.credentials.json").read_text()
             self.assertEqual(got, json.dumps({"token": f"{seat}'s own"}))
         self.assertEqual(creds.read_text(), '{"token": "shared, newer"}')
+
+    def test_codex_seat_never_checks_for_updates(self):
+        # Codex's "Update available" dialog at start swallowed the game prompt (2026-11-24).
+        cfg = self.shared / ".codex/config.toml"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text('model = "gpt-6.2-astra"\n\n[tui]\nx = 1\n')
+        (self.shared / ".codex/auth.json").write_text("{}")
+        (self.bin / "codex").write_text("#!/bin/sh\n")
+        (self.bin / "codex").chmod(0o755)
+        for _ in range(2):  # a restart doesn't add it twice
+            self.launch("openai", "codex", "--no-daemon")
+        got = (self.root / "seats" / "sonnet" / ".codex/config.toml").read_text()
+        self.assertEqual(got, 'check_for_update_on_startup = false\nmodel = "gpt-6.2-astra"\n\n[tui]\nx = 1\n')
+
+    def test_the_same_agent_info_is_reported_again_in_the_next_game(self):
+        # A Codex game is one turn: every game's logs read the same. Each game must get it.
+        info = '{"effort": "medium", "models": {"gpt-6.2-astra": 1}, "unit": "turns"}'
+        (self.pub / "seat_agentlogs.py").write_text(f"print({info!r})\n")
+        posts = Path(self.tmp.name) / "posts"
+        fn = re.search(r"^agent_reported=.*?^report_agent\(\) \{.*?^\}", (ROOT / "bin" / "seat").read_text(),
+                       re.S | re.M).group(0)
+        script = (f'api() {{ echo "$POKER_GAME $1 $2 $3" >> {posts}; }}\n{fn}\n'
+                  "for g in 20261125-002756 20261125-022344; do\n"
+                  "  POKER_GAME=$g; agent_at=0; report_agent; agent_at=0; report_agent\n"
+                  "done\n")
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                           env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "PUB": str(self.pub),
+                                "PLAYER": "codex", "HOME": str(self.shared)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(posts.read_text().splitlines(),
+                         [f"20261125-002756 POST /api/seat/agent {info}", f"20261125-022344 POST /api/seat/agent {info}"])
 
     def test_antigravity_gets_its_own_log_file(self):
         tok = self.shared / ".gemini/antigravity-cli/antigravity-oauth-token"

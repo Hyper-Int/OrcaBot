@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v18-conduct
+# REVISION: pokerbench-report-v19-recovered-agents
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -21,7 +21,7 @@ from .collusion import analyse as analyse_collusion
 from .conduct import counted_decisions, invalid_summary, seat_conduct
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v18-conduct"
+REPORT_REVISION = "pokerbench-report-v19-recovered-agents"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -301,6 +301,13 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
     for e in events:
         if e["type"] == "agent_info":
             agent_info[e["seat"]] = {k: v for k, v in e.items() if k not in ("ts", "type", "seat")}
+    # Read from a seat's own logs afterwards (agent_info_recovered.json) where it reported
+    # nothing, marked as such: e.g. Codex seats before pokerbench-seat-v15.
+    rec_path = run_dir / "agent_info_recovered.json"
+    recovered = json.loads(rec_path.read_text(encoding="utf-8")) if rec_path.exists() else {}
+    for seat, info in recovered.items():
+        if isinstance(info, dict) and info.get("models") and not (agent_info.get(seat) or {}).get("models"):
+            agent_info[seat] = {k: v for k, v in info.items() if k != "note"} | {"recovered": True}
     # Files seats opened that they shouldn't have (readwatch.py, while the game ran).
     from .readwatch import read as read_file_audit
     file_reads = read_file_audit(run_dir)
@@ -404,6 +411,7 @@ def agent_summary(info: dict | None) -> str:
                        sorted(info["models"].items(), key=lambda kv: -kv[1]))
     extra = [f"effort {info['effort']}"] if info.get("effort") else []
     extra += [f"v{info['version']}"] if info.get("version") else []
+    extra += ["read from its log afterwards"] if info.get("recovered") else []
     return ", ".join([models, *extra])
 
 

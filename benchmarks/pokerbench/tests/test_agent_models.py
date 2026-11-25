@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-agentlogs-v1
+# REVISION: pokerbench-report-v19-recovered-agents
 """Which model each agent terminal's agent used, read from the agent's own logs by its
 seat helper and reported to the engine; the report says it. From the 2026-11-22 games:
 nothing recorded that Gemini CLI's "Auto" ran every request on gemini-3.8-flash, or that
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pokerbench import agentlogs, cli
 from pokerbench.engine import Match, MatchConfig, clean_agent_info
-from pokerbench.report import _agent_lines, agent_summary, off_api_requests
+from pokerbench.report import _agent_lines, agent_summary, build, off_api_requests
 from pokerbench.server import make_server
 
 SINCE = "2026-11-22T23:53:23Z"
@@ -126,6 +126,25 @@ class EngineAndReportTests(unittest.TestCase):
                                              "a: gemini-3.8-flash (709 responses), v0.70.0"])
         self.assertEqual(_agent_lines({"seats": {"b": {}}}), [])
 
+
+    def test_the_report_uses_recovered_agent_info_where_a_seat_reported_none(self):
+        # Codex seats before pokerbench-seat-v15 reported only in a helper's first game.
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "run"
+            m = Match(MatchConfig(seats=("a", "b"), deals=4, require_join=False), run)
+            live = {"models": {"claude-opus-5-5": 9}, "unit": "requests", "effort": "medium"}
+            (run / "run.json").write_text(json.dumps({**json.loads((run / "run.json").read_text()),
+                                                      "agent_info": {"a": live}}))
+            (run / "agent_info_recovered.json").write_text(json.dumps({
+                "a": {"models": {"wrong": 1}, "effort": "low"},  # a reported: its own report wins
+                "b": {"models": {"gpt-6.2-astra": 1}, "unit": "turns", "effort": "medium", "note": "from its log"},
+                "_note": "recovered"}))
+            rep = build(run)
+        self.assertEqual(rep["seats"]["a"]["agent"]["models"], {"claude-opus-5-5": 9})
+        self.assertEqual(rep["seats"]["b"]["agent"],
+                         {"models": {"gpt-6.2-astra": 1}, "unit": "turns", "effort": "medium", "recovered": True})
+        self.assertEqual(agent_summary(rep["seats"]["b"]["agent"]),
+                         "gpt-6.2-astra (1 turns), effort medium, read from its log afterwards")
 
 if __name__ == "__main__":
     unittest.main()
