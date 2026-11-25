@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v17-limit
+# REVISION: pokerbench-main-v18-relay
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -33,7 +33,7 @@ from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig, load_checkp
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v17-limit"
+MAIN_REVISION = "pokerbench-main-v18-relay"
 # Seats that play from a process of their own (bots, API models, Agent blocks) wait this
 # long for an engine that isn't listening: it may be restarting, to carry the game on.
 SEAT_RETRY_S = 900.0
@@ -505,6 +505,15 @@ def main(argv: list[str] | None = None) -> int:
                         add_help=False)
     ra.add_argument("rest", nargs=argparse.REMAINDER)
     ra.set_defaults(fn=lambda a: __import__("pokerbench.ratings", fromlist=["main"]).main(a.rest))
+    # A delayed public copy of the table for the relay Worker (relay.py). REVISION: pokerbench-main-v18-relay
+    rl = sub.add_parser("relay", help="upload a delayed public copy of the table to the relay Worker")
+    rl.add_argument("--engine", default="http://127.0.0.1:8765", help="the engine's URL")
+    rl.add_argument("--target", required=True, help="https://<upload host>/tables/<name>")
+    rl.add_argument("--delay", type=float, default=120.0, help="seconds behind the live table (default 120)")
+    rl.add_argument("--interval", type=float, default=2.0, help="seconds between snapshots")
+    rl.add_argument("--results", default="/workspace/pokerbench-results",
+                    help="finished games, for the hands-played count (default /workspace/pokerbench-results)")
+    rl.set_defaults(fn=lambda a: __import__("pokerbench.relay", fromlist=["main"]).main(a))
     pr.set_defaults(fn=cmd_prompt)
 
     args = p.parse_args(argv)

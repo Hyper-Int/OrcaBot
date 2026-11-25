@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v16-limit
+# REVISION: pokerbench-table-engine-v17-relay
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -30,6 +30,9 @@
 #   SEATS        optional: seats that aren't linked (a sandbox that can't report links, or
 #                outside Orcabot). Normally empty: the players are the terminals and
 #                Agent blocks linked to this engine terminal (pokerbench host).
+#   RELAY_TARGET optional: https://<upload host>/tables/<name>. A public copy of the table,
+#                RELAY_DELAY seconds (default 120) behind, for the relay Worker (relay-worker/;
+#                README "Live page"). Needs the POKERBENCH_RELAY_KEY secret.
 #   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV (in PUB: model
 #   seats run the API player from it)
 #
@@ -39,7 +42,7 @@ set -u
 START="${START:-manual}"
 RESUME="${RESUME:-auto}"
 REJOIN_GRACE="${REJOIN_GRACE:-240}"
-REVISION=pokerbench-table-engine-v16-limit
+REVISION=pokerbench-table-engine-v17-relay
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -203,6 +206,15 @@ run_game() {  # k: the series game (0 for a single game); first: 1 to carry on a
   echo; cat "$OUT/report.md" 2>/dev/null
   echo "Results: $OUT"
 }
+
+# The public copy runs for as long as this terminal does, across every game of a series
+# (between games it has nothing new to send). REVISION: pokerbench-table-engine-v17-relay
+if [ -n "${RELAY_TARGET:-}" ]; then
+  "$PB" relay --engine "http://127.0.0.1:$PORT" --target "$RELAY_TARGET" --delay "${RELAY_DELAY:-120}" &
+  RELAY=$!
+  trap 'kill $RELAY 2>/dev/null' EXIT
+  echo "== Public table: $RELAY_TARGET, ${RELAY_DELAY:-120}s behind"
+fi
 
 k=$NEXT; first=1
 while :; do

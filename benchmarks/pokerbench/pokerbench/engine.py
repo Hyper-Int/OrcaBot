@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v22-prompt-check
+# REVISION: pokerbench-engine-v23-series-in-spectate
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v22-prompt-check"
+ENGINE_REVISION = "pokerbench-engine-v23-series-in-spectate"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -1647,6 +1647,10 @@ class Match:
                                  "seconds_left": round(max(0.0, self.hold_until - self.clock()), 1)}}
                    if self.hold_until is not None and self.status == "running" else {}),
                 **({"tournament": self._tournament_info()} if self.tournament else {}),
+                # Which game of a series this is (the public live page counts hands played
+                # across it). REVISION: pokerbench-engine-v23-series-in-spectate
+                **({"series": {"id": self.cfg.series, "game": self.cfg.series_game, "games": self.cfg.series_games}}
+                   if self.cfg.series else {}),
                 "isolation": self._isolation(),
                 "leaderboard": leaderboard(self.results, self.cfg.seats, self.cfg.big_blind),
                 "counters": self.counters,

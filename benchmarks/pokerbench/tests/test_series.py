@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v19-series
+# REVISION: pokerbench-engine-v23-series-in-spectate
 """A series: consecutive cash games with the same seed, game k seating every deal rotated
 by k, so across the series each player plays every deal from every seat exactly once and
 never sees a deal twice (duplicate across games instead of replays at one table, which an
@@ -24,6 +24,15 @@ ROOT = Path(__file__).resolve().parents[1]
 def series_cfg(seats, k, deals=4):
     return MatchConfig(seats=tuple(seats), deals=deals, seed=7, duplicate=False, rotation=k,
                        series="s1", series_game=k, series_games=len(seats), format="cash")
+
+
+class SpectateTests(unittest.TestCase):
+    def test_the_public_view_says_which_game_of_the_series(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = Match(series_cfg(("a", "b", "c"), 2), Path(d) / "run")
+            self.assertEqual(m.spectate()["series"], {"id": "s1", "game": 2, "games": 3})
+            single = Match(MatchConfig(seats=("a", "b"), deals=2), Path(d) / "run2")
+            self.assertNotIn("series", single.spectate())
 
 
 class ScheduleTests(unittest.TestCase):

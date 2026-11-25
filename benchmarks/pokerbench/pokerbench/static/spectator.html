@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v19-limit -->
+<!-- REVISION: pokerbench-spectator-v20-public -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -186,6 +186,7 @@
     <span id="game" class="pill" hidden></span>
     <span class="spacer"></span>
     <span id="isolation" class="pill" hidden></span>
+    <span id="delay" class="pill" hidden></span>
     <button id="control" class="ctl" hidden></button>
   </header>
 
@@ -277,8 +278,12 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v19-limit
-console.log(`[spectator] REVISION: pokerbench-spectator-v19-limit loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v20-public
+console.log(`[spectator] REVISION: pokerbench-spectator-v20-public loaded at ${new Date().toISOString()}`);
+// Public mode: the relay Worker serves this page with window.POKERBENCH_PUBLIC = {state: URL}.
+// It draws a delayed copy (relay.py) and has no controls: no Start, Pause, End, Settings
+// or player choice, and nothing is ever sent to an engine.
+const PUBLIC = window.POKERBENCH_PUBLIC || null;
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -342,6 +347,12 @@ function render() {
   el("blinds").hidden = !blinds;
   if (blinds) el("blinds").textContent = `blinds ${num(blinds[0])}/${num(blinds[1])}` +
     (s.tournament ? ` · level ${s.tournament.level}` : "");
+  const behind = PUBLIC && s.relay ? Math.round(s.relay.delay_s || 0) : 0;
+  el("delay").hidden = !behind;
+  if (behind) {
+    el("delay").textContent = behind >= 120 ? `${Math.round(behind / 60)} min behind` : `${behind}s behind`;
+    el("delay").title = `As of ${s.relay.as_of}: the public table runs ${behind} seconds behind the game.`;
+  }
   const iso = s.isolation, badge = el("isolation");
   badge.hidden = lobby || !iso;
   if (iso && !lobby) {
@@ -437,7 +448,9 @@ function render() {
   let center = "";
   if (lobby) {
     const ready = s.joined.length;
-    if (s.start === "manual") {
+    if (PUBLIC) {
+      center = `<div class="message">The game hasn't started yet.<small>${ready} of ${n} players are ready.</small></div>`;
+    } else if (s.start === "manual") {
       center = `<div class="message">${ready >= 2 ? `${ready} players are ready.` : ready === 1 ? "1 player is ready. A game needs at least 2." : "Waiting for players to sit down."}
         <small>Log in to each agent in its own terminal${n ? "; click a bot seat to change it" : ""}. Link a terminal or Agent block to the engine to add a player. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.</small></div>
         <div class="actions">
@@ -454,6 +467,12 @@ function render() {
     center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(sd.board[k])).join("")}</div>
       <div class="message">${winners.map(esc).join(" & ") || "Split"} ${winners.length === 1 ? "wins" : "win"} ${num(pot)}
       <small>hand ${sd.hand} · ${sd.showdown ? "showdown" : "everyone else folded"}</small></div>`;
+  } else if (PUBLIC && s.status === "running" && s.resuming) {
+    center = `<div class="message">Carrying on after a restart
+        <small>${num(s.hands_played ?? 0)} hands were played before the engine restarted. The next hand is dealt once the players are back.</small></div>`;
+  } else if (PUBLIC && live && s.paused) {
+    center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(live.board[k])).join("")}</div>
+      <div class="paused-tag">PAUSED</div>`;
   } else if (s.status === "running" && s.resuming && confirmEnd) {
     center = `<div class="message">End the game now?
         <small>The results so far are kept. Every player is told the game is over and stops.</small></div>
@@ -495,7 +514,7 @@ function render() {
     const top = standings.length ? standings[0][0] : null;
     const ended = s.finish_reason === "ended";
     center = `<div class="message">${ended ? "Game ended early" : "Game over"}${top ? ` · ${esc(top)} ${ended ? "was ahead" : "wins"}` : ""}
-      <small>${ended ? `After ${num(s.hands_played ?? 0)} hands. The players have been told to stop. ` : ""}Full report: /workspace/pokerbench-results/ (the engine terminal prints it too). Restart the engine terminal for a new game.</small></div>`;
+      <small>${ended ? `After ${num(s.hands_played ?? 0)} hands. ` : ""}${PUBLIC ? "" : "Full report: /workspace/pokerbench-results/ (the engine terminal prints it too). Restart the engine terminal for a new game."}</small></div>`;
   }
   if (controlError) center += `<div class="error">${esc(controlError)}</div>`;
   el("center").innerHTML = center;
@@ -508,7 +527,7 @@ function render() {
 
   // Pause / Resume in the header while the game runs.
   const ctl = el("control");
-  ctl.hidden = s.status !== "running";
+  ctl.hidden = PUBLIC || s.status !== "running";
   ctl.textContent = s.paused ? "Resume" : "Pause";
   ctl.disabled = busy;
   ctl.onclick = () => control(s.paused ? "resume" : "pause");
@@ -561,7 +580,7 @@ let draft = null;            // the player being edited: {seat, kind, model, pro
 
 function canChoose(seat) {
   const s = state;
-  return Boolean(s && s.status === "waiting_for_players" && settings && settings.editable
+  return Boolean(!PUBLIC && s && s.status === "waiting_for_players" && settings && settings.editable
     && BOT_KINDS.includes(((s.players || {})[seat] || {}).kind));
 }
 
@@ -729,6 +748,7 @@ async function change(key, value) {
 
 async function loadSettings() {
   settingsAsked = true;
+  if (PUBLIC) return;
   try {
     const res = await fetch("/api/table/settings", { cache: "no-store" });
     settings = res.ok ? await res.json() : null;
@@ -796,6 +816,7 @@ function renderSettings(force) {
 
 // Start, pause, resume or end the game.
 async function control(action) {
+  if (PUBLIC) return;
   if (action !== "end") confirmEnd = false;
   busy = true; controlError = ""; render();
   try {
@@ -813,7 +834,7 @@ async function control(action) {
 let timer = null;
 async function poll(once) {
   try {
-    const res = await fetch("/api/spectate", { cache: "no-store" });
+    const res = await fetch(PUBLIC ? PUBLIC.state : "/api/spectate", { cache: "no-store" });
     if (res.ok) {
       state = await res.json();
       // Settings: kept fresh in the lobby (someone else may change them), read once more after the start.
@@ -825,12 +846,14 @@ async function poll(once) {
       if (last) shownHand = last.hand;
       render();
     } else {
-      el("status").textContent = `engine error ${res.status}`;
+      el("status").textContent = PUBLIC ? (res.status === 404 ? "no game on this table yet" : "table unavailable")
+        : `engine error ${res.status}`;
     }
   } catch {
-    el("status").textContent = "engine not running — start the engine terminal";
+    el("status").textContent = PUBLIC ? "can't reach the table" : "engine not running — start the engine terminal";
   }
-  if (!once) { clearTimeout(timer); timer = setTimeout(poll, 1000); }
+  // The public copy changes every couple of seconds at most (and is cached that long).
+  if (!once) { clearTimeout(timer); timer = setTimeout(poll, PUBLIC ? 2000 : 1000); }
 }
 setupForm();
 setupPlayers();

@@ -496,6 +496,51 @@ Reference bots (`--strategy`): `call` (calling station), `random`, and `tight`
 (simple hand-strength rules). They are weak on purpose. Stronger fixed opponents
 (Slumbot, an OpenSpiel CFR bot) are a later phase.
 
+## Live page
+
+<!-- REVISION: pokerbench-relay-v1 -->
+A read-only copy of the table for people outside Orcabot (a blog post's iframe), running
+`RELAY_DELAY` seconds behind the game: [`relay.py`](pokerbench/relay.py) in the engine
+terminal reads `/api/spectate` (no live hole cards), keeps only what the table page draws
+(`public_view`), holds each snapshot for the delay and uploads it to a small Worker
+([`relay-worker/`](relay-worker/)), which serves the table page in public mode: no Start,
+Pause, End, Settings or player choice, nothing sent to any engine.
+
+**Why it's kept from the seats.** A series deals the same 100 deals in every game, so a
+board shown in game 1 is that deal's board in games 2–10. The seats must not be able to
+read the live page during the series:
+- the Worker answers on two hosts: `UPLOAD_HOST` takes uploads only (and serves no
+  table), `PUBLIC_HOST` serves the table only. Deny `PUBLIC_HOST` on the PokerBench
+  dashboard (egress **Deny Always**) so the egress proxy refuses it. Check it from a seat
+  terminal before relying on it (`curl -sI https://<PUBLIC_HOST>/robots.txt` should fail):
+  seats run as their own users (uid 3000+), not the pool UIDs the kernel egress rules cover;
+- web search tools run at the model provider, not on the VM, so the denial doesn't cover
+  them: every response is `noindex`, `robots.txt` disallows everything and the cards are
+  only in JSON the page fetches, so search results don't carry them;
+- the tool audit records web searches by Claude Code, Codex, Gemini CLI and Antigravity
+  CLI seats (Codex's is a `web_search_call` item, agy's its `search_web` tool): see Tests
+  below. A search a provider runs inside the model without a tool call (search grounding)
+  leaves nothing to record.
+
+**Set up** (once):
+1. Pick a random upload key. In `relay-worker/wrangler.toml` set `UPLOAD_HOST` to the
+   Worker's workers.dev host (`PUBLIC_HOST` is `pokerbench.orcabot.com`, its custom domain;
+   the page is embedded in orcabot.com/benchmarks/pokerbench by
+   `frontend/src/components/charts/PokerBenchLive.tsx`), then
+   `wrangler secret put RELAY_KEY -c benchmarks/pokerbench/relay-worker/wrangler.toml`
+   and `wrangler deploy -c benchmarks/pokerbench/relay-worker/wrangler.toml`.
+2. In Orcabot, add the same key as the secret `POKERBENCH_RELAY_KEY` (broker-protected).
+   The engine terminal only ever holds a placeholder; the broker adds the key to requests
+   for the upload host once you approve that host for the engine terminal (the first
+   upload asks: header `Authorization`, format `Bearer %s`). Deny any request for it from a
+   seat terminal.
+3. On the dashboard, **Deny Always** `PUBLIC_HOST`.
+4. In the engine terminal's settings: `RELAY_TARGET=https://pokerbench-relay.orcabot.workers.dev/tables/pokerbench`
+   (and `RELAY_DELAY`, default 120), then restart it between series. The table is
+   `https://pokerbench.orcabot.com/tables/pokerbench`, the name the benchmark page embeds.
+
+Worker tests: `node --test benchmarks/pokerbench/relay-worker/test/*.test.mjs`.
+
 ## Tests
 
 ```
@@ -510,6 +555,7 @@ The suite covers:
 - HTTP auth and the request log (tokens never reach any file);
 - a full bot match over HTTP, and CLI rendering.
 
+<!-- REVISION: pokerbench-toolaudit-v4-antigravity -->
 **Tools other than `poker`** ([`toolaudit.py`](pokerbench/toolaudit.py)): every Orcabot
 agent terminal also has Orcabot's own tools (a dashboard-wide memory and task list,
 creating and editing canvas items and terminals, driving the dashboard's browser, which
@@ -517,8 +563,10 @@ shows the table page). The Fair play prompt (v2) allows only the `poker` command
 they are a **second honeypot**: while a game runs the engine's host (root) reads each
 agent seat's transcript in its private home and records every tool call that isn't
 `poker`, Orcabot's (`orcabot_tool`) and anything else (`other`), in `tool_audit.jsonl`;
-the report counts and lists them. Claude Code, Codex and Gemini CLI; not Antigravity CLI
-(its conversations are protobuf and its log doesn't name tools).
+the report counts and lists them. Claude Code, Codex, Gemini CLI and Antigravity CLI (its
+conversations are protobuf, but it also writes each one as JSON lines as it goes:
+`brain/<conversation>/.system_generated/logs/transcript_full.jsonl`, whose steps carry
+their tool calls with arguments).
 
 ## Ratings
 
