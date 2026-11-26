@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v6-identifier-renames
-const sandboxClientRevision = "sandbox-client-v6-identifier-renames";
+// REVISION: sandbox-client-v9-background-processes
+const sandboxClientRevision = "sandbox-client-v9-background-processes";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -25,6 +25,23 @@ export interface SandboxSession {
 
 export interface SandboxPty {
   id: string;
+}
+
+export interface SandboxBackgroundProcess {
+  pid: number;
+  ppid: number;
+  uid: number;
+  name: string;
+  command: string;
+  start_ticks: number;
+  started_at: string;
+  pty_id: string;
+}
+
+export interface SandboxBackgroundStopResult {
+  pid: number;
+  outcome: 'stopped' | 'gone' | 'refused' | 'failed';
+  detail?: string;
 }
 
 export class SandboxClient {
@@ -240,6 +257,13 @@ export class SandboxClient {
       // only gets one at sandbox-session create; resending it with each PTY lets a
       // VM whose token was refused (e.g. after PTY_TOKEN_SECRET rotation) recover.
       dashboardToken?: string;
+      // The dashboard's Auto sleep (off = its terminals keep running with nobody
+      // watching). Session-wide on the sandbox; sent with every PTY so a new VM or
+      // session has it before its first terminal could idle out.
+      autoSleep?: boolean;
+      // Gemini CLI: the sandbox answers its "Untrusted Command Flags" prompt with
+      // "Allow once" (the terminal's Auto-approve flagged commands setting).
+      autoApproveFlagged?: boolean;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
         provider: 'default' | 'openrouter' | 'custom';
@@ -255,7 +279,7 @@ export class SandboxClient {
     const shouldSendBody = Boolean(
       creatorId || command || options?.ptyId || options?.integrationToken ||
       options?.workingDir || options?.executionId || options?.modelSelection ||
-      options?.dashboardToken
+      options?.dashboardToken || options?.autoSleep !== undefined || options?.autoApproveFlagged
     );
     const body = shouldSendBody
       ? JSON.stringify({
@@ -273,6 +297,8 @@ export class SandboxClient {
           model_selection: options?.modelSelection,
           // Same field name as POST /sessions (cpauth dashboard token)
           mcp_token: options?.dashboardToken,
+          auto_sleep: options?.autoSleep,
+          auto_approve_flagged: options?.autoApproveFlagged || undefined,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
@@ -293,6 +319,28 @@ export class SandboxClient {
       throw new Error(`Failed to create PTY: ${res.status} - ${errorBody}`);
     }
     return res.json();
+  }
+
+  /**
+   * Set the dashboard's Auto sleep on a live sandbox session (POST
+   * /sessions/:id/auto-sleep). Off keeps its terminals running with nobody watching.
+   * REVISION: sandbox-client-v7-auto-sleep
+   */
+  async setAutoSleep(sessionId: string, autoSleep: boolean, machineId?: string, timeoutMs = 5_000): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/auto-sleep`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ auto_sleep: autoSleep }),
+    }, timeoutMs);
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(no body)');
+      throw new Error(`Failed to set auto sleep: ${res.status} - ${errorBody}`);
+    }
   }
 
   async deletePty(sessionId: string, ptyId: string, machineId?: string): Promise<void> {
@@ -341,4 +389,39 @@ export class SandboxClient {
     }
   }
 
+  // A terminal's leftover background processes (sandbox cmd/server/bgproc.go), for the
+  // restart dialog. ptyIds: the terminal's current and earlier PTY ids.
+  // REVISION: sandbox-client-v9-background-processes
+  async listBackgroundProcesses(sessionId: string, ptyIds: string[], machineId?: string): Promise<SandboxBackgroundProcess[]> {
+    const headers = new Headers(this.authHeaders());
+    if (machineId) headers.set('X-Sandbox-Machine-ID', machineId);
+    const q = encodeURIComponent(ptyIds.join(','));
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/background-processes?pty_ids=${q}`, { headers }, 8_000);
+    if (!res.ok) {
+      throw new Error(`Failed to list background processes: ${res.status}`);
+    }
+    const body = await res.json() as { processes?: SandboxBackgroundProcess[] };
+    return body.processes || [];
+  }
+
+  async stopBackgroundProcesses(
+    sessionId: string,
+    ptyIds: string[],
+    processes: Array<{ pid: number; start_ticks: number }>,
+    machineId?: string,
+  ): Promise<SandboxBackgroundStopResult[]> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) headers.set('X-Sandbox-Machine-ID', machineId);
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/background-processes/stop`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ pty_ids: ptyIds, processes }),
+    }, 20_000);
+    if (!res.ok) {
+      throw new Error(`Failed to stop background processes: ${res.status}`);
+    }
+    const body = await res.json() as { results?: SandboxBackgroundStopResult[] };
+    return body.results || [];
+  }
 }

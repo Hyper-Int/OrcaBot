@@ -24,6 +24,8 @@
     "GMAIL_PUBSUB_TOPIC": "Cloud-only — Google Pub/Sub push notifications need a public URL. Desktop uses polling instead.",
     "BRIDGE_URL": "External service — WhatsApp/Baileys bridge runs separately on Fly. Desktop does not bundle it yet.",
     "BRIDGE_INTERNAL_TOKEN": "External service — see BRIDGE_URL.",
+    "AGENT_HUB_URL": "External service — the agent hub that Agent blocks' outside agents connect to. Unset = Agent blocks show 'not set up'. Desktop doesn't wire it yet.",
+    "AGENT_HUB_PARTNER_SECRET": "External service — see AGENT_HUB_URL.",
     "WHATSAPP_ACCESS_TOKEN": "External service — Meta WhatsApp Business API requires a public webhook URL.",
     "WHATSAPP_APP_SECRET": "External service — see WHATSAPP_ACCESS_TOKEN.",
     "WHATSAPP_BUSINESS_PHONE": "External service — see WHATSAPP_ACCESS_TOKEN.",

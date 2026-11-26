@@ -130,6 +130,16 @@ Key files:
 - `frontend/src/components/EgressApprovalDialog.tsx` — Approval dialog UI
 - `frontend/src/components/EgressAllowlistPanel.tsx` — Allowlist management UI
 
+### Agent Blocks (outside AI agents)
+An `agent` canvas block is an AI agent that runs on its own computer (Grok Bot, Muse, Dots, Claude Code, Codex, ...), linked to the user with a pairing code. Messages are end-to-end encrypted (MLS) through an agent hub (`AGENT_HUB_URL`); the hub is never named in the UI.
+- Each Orcabot user has a hub **owner** identity, issued server to server (`AGENT_HUB_PARTNER_SECRET`). Its token lives only in `agent_hub_owners` (encrypted) — **never in `user_secrets`**, which are pushed into the VM env — and only approves codes / lists / removes agents.
+- Each dashboard VM is a **linked device of the dashboard owner** (as with secrets: one VM, the owner's credentials). The VM's client (`sandbox/internal/agentlink`, running `orcabot-agent-link` as its own user, state outside `/workspace`) makes its own keys; the control plane approves its code only after checking it is a *device* code with *this dashboard's* device name (`/internal/dashboards/:id/agent-link/approve-device`).
+- **No agent without edge**: a terminal reaches only Agent blocks its canvas item has an edge to, decided by the control plane from D1 edges (`/internal/dashboards/:id/terminals/:ptyId/agents`), served to the terminal over the privileged socket (`/agents`, SO_PEERCRED) or MCPLocal (per-PTY secret, pool-guarded).
+- The block's chat view is **owner-only** (`/dashboards/:id/agents/chat`): chatting from the VM is chatting as the owner.
+- **Terminal links**, the same way: a terminal can ask which *terminals* its item has an edge to (`/internal/dashboards/:id/terminals/:ptyId/links` → `controlplane/src/terminals/links.ts`; sandbox `/links` on the privileged socket or MCPLocal, `sandbox/cmd/server/terminallinks.go`). It returns names and PTY ids only (never boot commands, output or env), plus each linked PTY's pool UID in pool mode, so a coordinator (PokerBench's engine seats the players linked to it) can bind each to its own OS user.
+- **Self-input**: a process may type into *its own* terminal, as if the user typed or pasted it (sandbox `/input` on the privileged socket or `POST /sessions/:id/ptys/:ptyId/input` on MCPLocal, `sandbox/cmd/server/selfinput.go`; text, optional bracketed paste, optional Enter; every use logged). Used to hand a prompt to the interactive agent a user started and logged into there (PokerBench's seat helper at Start). Only ever the caller's own PTY, never another terminal. Its counterpart **own screen** (`/screen`, `GET .../ptys/:ptyId/screen`) returns the caller's own raw recent output (ANSI intact, 64KB) and `X-Screen-Rows`/`X-Screen-Cols`, so it can render what its terminal shows now: `/scrollback` strips the escape codes, so text an agent's UI has redrawn over (an answered dialog) stays in it.
+- Key files: `controlplane/src/agents/handler.ts`, `sandbox/internal/agentlink/`, `sandbox/cmd/server/agentlink.go`, `frontend/src/components/blocks/AgentBlock.tsx`, `frontend/src/data/agent-kinds.ts`
+
 ### Network Egress Proxy Feature Flag
 The egress proxy is gated behind a single env var:
 - **Global**: Set `EGRESS_PROXY_ENABLED=true` on the Fly machine to enable for all sessions
@@ -202,7 +212,8 @@ LLM (in sandbox PTY)
 When an LLM agent (Claude, Gemini, etc.) finishes a turn, stop hooks notify the
 sandbox so it can broadcast `agent_stopped` WebSocket events to all connected clients.
 - Hook scripts: `sandbox/internal/agenthooks/hooks.go`
-- Supported agents: Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
+- Supported agents: Claude Code, Gemini CLI, Antigravity CLI (`agy`), OpenCode, Codex, Droid, OpenClaw
+- Antigravity CLI (Gemini CLI's successor for Google AI Pro/Ultra plans, which Gemini CLI stopped serving on 2026-06-18): installed in the image (`/usr/local/bin/agy`, self-updating); sign-in is Google OAuth in the terminal (open the link, paste the code), and with no keyring on the VM its token lands in `~/.gemini/antigravity-cli/antigravity-oauth-token` on the workspace volume. Orcabot's MCP server goes in `.agents/mcp_config.json`, users' MCP tools in `~/.gemini/config/mcp_config.json`, the Stop hook in `.agents/hooks.json`
 - Settings files generated per-agent (`.claude/settings.json`, `.gemini/settings.json`, etc.)
 - **All hooks must include `X-MCP-Secret` header** from `ORCABOT_MCP_SECRET` env var — unauthenticated hook callbacks are rejected
 
@@ -215,6 +226,9 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Sandbox sessions use a shared `/workspace` by default
 - PTY cwd is set to the session workspace
 - Multiple PTYs per sandbox with turn-taking
+- **Auto sleep** (per dashboard, `dashboards.auto_sleep`, default on; checkbox in the dashboard menu bar, `frontend/src/components/AutoSleepToggle.tsx`). On: a terminal with no viewer is stopped after the PTY hub's 10-minute idle timeout (`sandbox/internal/pty/hub.go`), Fly suspends the idle VM, and the cron retires a VM 6h after the last terminal activity. Off (benchmark templates start that way): the sandbox session's `keepAwake` flag (sent as `auto_sleep` on every PTY create and via `POST /sessions/:id/auto-sleep` on toggle) keeps terminals running unwatched, the cron pings the VM through the Fly proxy every tick so it isn't suspended, and the VM is retired only 48h after the last terminal activity. See `controlplane/src/dashboards/auto-sleep.ts`. Templates carry `auto_sleep`; `benchmarks/bin/seed-benchmark-templates` seeds benchmark templates with it off
+- **Restart asks about background processes**: a restart kills the terminal's PTY process group, but a process that detached from it (a daemon, `setsid`) keeps running with that run's env (e.g. Codex's shared app-server daemon keeps an old `ORCABOT_PTY_ID`). Before a *user* restart (menu, "restart to apply", Reopen; never automatic restarts) the frontend lists them and the user picks which to stop (`RestartBackgroundDialog.tsx`). The control plane (owners/editors) supplies every PTY id the terminal's sessions ever had (`controlplane/src/sessions/background-processes.ts`); the sandbox finds live processes carrying one in `ORCABOT_PTY_ID` and outside every live PTY's group, and re-checks PID + start time before SIGTERM→SIGKILL (`sandbox/internal/bgproc`, `GET/POST /sessions/:id/background-processes[/stop]`)
+- **Auto-approve flagged commands** (Gemini CLI terminals only; `terminalContent.autoApproveFlagged`, terminal settings dropdown; off by default, on in the PokerBench template). Gemini CLI asks before running a command that reuses a path/URL/flag from earlier tool output ("Untrusted Command Flags" prompt), and `--yolo` doesn't cover it. When on, the control plane sends `auto_approve_flagged` on PTY create and the sandbox watches that PTY's output (`Hub.AddOutputWatcher`) and answers only that dialog with "Allow once" (Enter), logging each answer — `sandbox/internal/geminiapprove`. Applies when the terminal restarts
 
 ### Desktop, the `orcabot` CLI & Surface Switching
 - The `desktop` Tauri app bundles the whole stack locally: control plane on `workerd`, a SQLite "D1" shim, and a sandbox VM (Apple Virtualization.framework on macOS / QEMU on Linux).

@@ -34,13 +34,14 @@ func NewAgentStoppedEvent(agent, lastMessage, reason string) AgentStoppedEvent {
 
 // Agent identifiers used in events
 const (
-	AgentClaudeCode = "claude-code"
-	AgentGemini     = "gemini"
-	AgentOpenCode   = "opencode"
-	AgentOpenClaw   = "openclaw"
-	AgentMoltbot    = "moltbot" // legacy alias
-	AgentDroid      = "droid"
-	AgentCodex      = "codex"
+	AgentClaudeCode  = "claude-code"
+	AgentGemini      = "gemini"
+	AgentOpenCode    = "opencode"
+	AgentOpenClaw    = "openclaw"
+	AgentMoltbot     = "moltbot" // legacy alias
+	AgentDroid       = "droid"
+	AgentCodex       = "codex"
+	AgentAntigravity = "antigravity"
 )
 
 // Stop reasons

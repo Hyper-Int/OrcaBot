@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v27-error-codes
-console.log(`[controlplane] REVISION: controlplane-v27-error-codes loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v30-background-processes
+console.log(`[controlplane] REVISION: controlplane-v30-background-processes loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -24,6 +24,7 @@ import {
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
 import { nearestFlyRegion } from './sessions/handler';
+import * as backgroundProcesses from './sessions/background-processes';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
@@ -42,6 +43,8 @@ import * as bugReports from './bug-reports/handler';
 import * as agentState from './agent-state/handler';
 import * as chat from './chat/handler';
 import * as egress from './egress/handler';
+import * as agents from './agents/handler';
+import { handleInternalTerminalLinks } from './terminals/links';
 import * as analytics from './analytics/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
@@ -57,6 +60,10 @@ import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 import { sandboxAuthEnv } from './sandbox/request-signing';
+import {
+  countOwnWarmMachines, listOwnWarmMachines, machineControlplaneEnv, newestImage, recordWarmMachine,
+  releaseWarmMachine, sandboxControlplaneUrl, staleWarmMachines,
+} from './sandbox/warm-pool';
 
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
@@ -631,6 +638,10 @@ export default {
         await cleanupOrphanedFlyResources(envWithBindings);
         await reapUntrackedFlyResources(envWithBindings);
         await replenishWarmPool(envWithBindings);
+        // Auto sleep off: keep those dashboards' VMs from being suspended by Fly.
+        // REVISION: auto-sleep-v1-dashboard-setting
+        const { keepAwakeDashboards } = await import('./dashboards/auto-sleep');
+        await keepAwakeDashboards(envWithBindings);
       }
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
@@ -648,19 +659,21 @@ export default {
  */
 async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> {
   try {
+    // Idle limit per dashboard: AUTO_SLEEP_ON_MAX_IDLE_HOURS (6h), or
+    // AUTO_SLEEP_OFF_MAX_IDLE_HOURS (48h) when its Auto sleep is off (long unattended
+    // benchmark runs). Until the auto_sleep column exists, everything uses 6h.
+    // REVISION: auto-sleep-v1-dashboard-setting
+    const { autoSleepColumnReady, idleBeyondLimitSql, LAST_ACTIVITY_JOIN } = await import('./dashboards/auto-sleep');
+    const idleBeyondLimit = idleBeyondLimitSql(await autoSleepColumnReady(env));
     const orphans = await env.DB.prepare(`
       SELECT ds.dashboard_id, ds.sandbox_machine_id, ds.fly_volume_id
       FROM dashboard_sandboxes ds
       LEFT JOIN dashboards d ON ds.dashboard_id = d.id
-      LEFT JOIN (
-        SELECT dashboard_id, MAX(COALESCE(stopped_at, created_at)) AS last_activity
-        FROM sessions
-        GROUP BY dashboard_id
-      ) s ON s.dashboard_id = ds.dashboard_id
+      ${LAST_ACTIVITY_JOIN}
       WHERE ds.sandbox_machine_id != ''
         AND (
           d.id IS NULL
-          OR COALESCE(s.last_activity, ds.created_at) < datetime('now', '-6 hours')
+          OR ${idleBeyondLimit}
         )
     `).all<{ dashboard_id: string; sandbox_machine_id: string; fly_volume_id: string }>();
 
@@ -715,15 +728,40 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       ? env.FLY_WARM_POOL_REGIONS.split(',').map(r => r.trim()).filter(Boolean)
       : [env.FLY_REGION || 'sjc'];
 
-    // Count only machines in configured regions (ignore stale machines from old configs)
-    const regionCounts = await env.DB.prepare(
-      `SELECT region, COUNT(*) as cnt FROM warm_machines GROUP BY region`
-    ).all<{ region: string; cnt: number }>();
+    const owner = sandboxControlplaneUrl(env);
+
+    // The image new machines get: the configured one, else the newest any machine runs.
+    const machines = await fly.listMachines();
+    let image = env.FLY_MACHINE_IMAGE || '';
+    if (!image || image.endsWith(':latest')) {
+      const discovered = newestImage(machines);
+      if (discovered) image = discovered;
+    }
+
+    // Retire warm machines on another image (made before a deploy, or while it was rolling
+    // out) or of another size (made before SANDBOX_GUEST changed), so no dashboard is
+    // handed an old sandbox. Only machines still in the pool: each is taken out of
+    // warm_machines first, and left alone if a dashboard claimed it first.
+    // REVISION: warm-pool-v4-prune-other-sizes
+    if (image) {
+      const { SANDBOX_GUEST } = await import('./sandbox/fly-machines');
+      const stale = staleWarmMachines(await listOwnWarmMachines(env.DB, owner), machines, image, SANDBOX_GUEST);
+      for (const w of stale) {
+        if (!(await releaseWarmMachine(env.DB, w.machine_id))) continue;
+        console.log(`[warmPool] Retiring warm machine ${w.machine_id}: not on ${image} as ${SANDBOX_GUEST.cpu_kind}-${SANDBOX_GUEST.cpus}x`);
+        try { await fly.destroyMachine(w.machine_id, true); } catch { /* the reaper retries untracked machines */ }
+        try { await fly.deleteVolume(w.volume_id); } catch { /* likewise */ }
+      }
+    }
+
+    // Count only this control plane's machines (dev and production share the table)
+    // in configured regions (ignore stale machines from old configs).
+    const regionCounts = await countOwnWarmMachines(env.DB, owner);
 
     const configuredRegionSet = new Set(warmPoolRegions);
     const countByRegion: Record<string, number> = {};
     let configuredCount = 0;
-    for (const row of regionCounts.results || []) {
+    for (const row of regionCounts) {
       countByRegion[row.region] = row.cnt;
       if (configuredRegionSet.has(row.region)) {
         configuredCount += row.cnt;
@@ -743,13 +781,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       }
     }
 
-    // Discover image from existing machines
-    let image = env.FLY_MACHINE_IMAGE || '';
-    if (!image || image.endsWith(':latest')) {
-      const discovered = await fly.discoverImage();
-      if (discovered) image = discovered;
-      else if (!image) return;
-    }
+    if (!image) return;
 
     // Create volume + machine (track IDs for cleanup on failure)
     const volumeSuffix = crypto.randomUUID().slice(0, 6);
@@ -777,7 +809,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         autostop: 'off',
         env: {
           ...(await sandboxAuthEnv(env)),
-          CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
+          ...machineControlplaneEnv(env),
           ...sandboxInternalTokenEnv(env),
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
           ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),
@@ -788,9 +820,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       machineId = machine.id;
       await fly.waitForState(machine.id, 'started', 90);
 
-      await env.DB.prepare(`
-        INSERT INTO warm_machines (machine_id, volume_id, region) VALUES (?, ?, ?)
-      `).bind(machine.id, volume.id, region).run();
+      await recordWarmMachine(env.DB, owner, machine.id, volume.id, region);
 
       console.log(`[warmPool] Replenished pool in ${region} (${configuredCount + 1}/${WARM_POOL_TARGET})`);
     } catch (innerErr) {
@@ -1574,7 +1604,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 2 && method === 'PUT') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name?: string };
+    const data = await request.json() as { name?: string; autoSleep?: boolean };
     return dashboards.updateDashbоard(env, segments[1], auth.user!.id, data);
   }
 
@@ -1618,7 +1648,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
       'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord',
       'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
-      'outlook_calendar', 'benchmark',
+      'outlook_calendar', 'benchmark', 'agent',
     ]);
     if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
       return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });
@@ -2615,6 +2645,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, ctx);
   }
 
+  // REVISION: agent-link-v1-hub-owner
+  // Agent blocks: outside AI agents linked with a pairing code (src/agents/handler.ts).
+  // GET /agents, POST /agents/link {code}, DELETE /agents?identity=
+  if (segments[0] === 'agents' && segments.length === 1 && (method === 'GET' || method === 'DELETE')) {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return method === 'GET' ? agents.handleListAgents(env, auth) : agents.handleUnlinkAgent(request, env, auth);
+  }
+  if (segments[0] === 'agents' && segments.length === 2 && segments[1] === 'link' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agents.handleLinkAgent(request, env, auth);
+  }
+  // GET/POST /dashboards/:id/agents/chat - chat with a linked agent through the dashboard VM (owner only)
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'agents' && segments[3] === 'chat'
+      && (method === 'GET' || method === 'POST')) {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agents.handleAgentChat(request, env, auth, segments[1],
+      () => resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion));
+  }
+
   // POST /dashboards/:id/browser/start - Start dashboard browser
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'start' && method === 'POST') {
     const authError = requireAuth(auth);
@@ -3058,6 +3110,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return sessions.stоpSessiоn(env, segments[1], auth.user!.id, ctx);
   }
 
+  // GET /sessions/:id/background-processes - What a restart would leave running
+  // POST /sessions/:id/background-processes/stop - Stop the ones the user chose
+  // REVISION: controlplane-v30-background-processes
+  if (segments[0] === 'sessions' && segments[2] === 'background-processes') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (segments.length === 3 && method === 'GET') {
+      return backgroundProcesses.listBackgroundProcesses(env, segments[1], auth.user!.id);
+    }
+    if (segments.length === 4 && segments[3] === 'stop' && method === 'POST') {
+      return backgroundProcesses.stopBackgroundProcesses(env, request, segments[1], auth.user!.id);
+    }
+  }
+
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
   if (segments[0] === 'sessions' && segments.length === 5 && segments[2] === 'ptys' && segments[4] === 'ws' && method === 'GET') {
     const wsOrigin = request.headers.get('Origin') || '';
@@ -3381,6 +3447,32 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = await authorizeSandboxForDashboard(request, env, await dashboardIdForSandboxSession(env, segments[2]));
     if (authError) return authError;
     return sessions.getApprovedDomainsInternal(env, segments[2]);
+  }
+
+  // REVISION: agent-link-v1-hub-owner
+  // Agent blocks, called by the dashboard's VM (dashboard-scoped token):
+  // GET  /internal/dashboards/:id/agent-link/config          - hub URL and this dashboard's device name
+  // POST /internal/dashboards/:id/agent-link/approve-device  - link the VM's client as the owner's device
+  // GET  /internal/dashboards/:id/terminals/:ptyId/agents    - agents a terminal is connected to by edges
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'agent-link') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    if (segments[4] === 'config' && method === 'GET') return agents.handleInternalAgentLinkConfig(env, segments[2]);
+    if (segments[4] === 'approve-device' && method === 'POST') return agents.handleInternalApproveDevice(request, env, segments[2]);
+  }
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 6 && segments[3] === 'terminals'
+      && segments[5] === 'agents' && method === 'GET') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    return agents.handleInternalTerminalAgents(env, segments[2], segments[4]);
+  }
+  // GET  /internal/dashboards/:id/terminals/:ptyId/links     - terminals a terminal is linked to by edges
+  //   (e.g. the players linked to a game engine). REVISION: terminal-links-v1
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 6 && segments[3] === 'terminals'
+      && segments[5] === 'links' && method === 'GET') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    return handleInternalTerminalLinks(env, segments[2], segments[4]);
   }
 
   // GET /internal/dashboards/:id/egress/allowlist - Sandbox loads persisted egress allowlist on startup

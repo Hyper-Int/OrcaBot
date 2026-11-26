@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v49-shm-rmid-forced
+// REVISION: main-v53-background-processes
 
 package main
 
@@ -37,12 +37,13 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminiapprove"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v49-shm-rmid-forced"
+const mainRevision = "main-v53-background-processes"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -204,6 +205,11 @@ func ensurePathFloor() {
 }
 
 func main() {
+	// The control plane that created this VM, not the Fly app-wide secret (see
+	// cpauth.MachineControlPlaneURLEnv). First, before anything reads CONTROLPLANE_URL.
+	// REVISION: main-v50-machine-controlplane-url
+	cpauth.ApplyMachineControlPlaneURL()
+
 	// Set umask 0002 so every child process — interactive shell, bash -c, or direct
 	// exec — creates group-writable files by default. Shell startup files (profile.d,
 	// bashrc) only run for interactive/login shells and are bypassed entirely for
@@ -480,6 +486,17 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.poolModeGuard(s.requireLocalPTYAuth(s.handleToolsChanged)))
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.poolModeGuard(s.requireLocalPTYAuth(s.handleScrollback)))
 
+	// Agent blocks: agents this terminal is connected to by edges — blocked in pool mode
+	// (the Unix socket's /agents/ serves pool PTYs). REVISION: agent-link-v1-device-client
+	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/agents", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAgentsLocal)))
+	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/agents/{action}", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAgentsLocal)))
+	// Terminals linked to this terminal by edges (pool mode: the Unix socket's /links).
+	// REVISION: terminal-links-v1
+	mux.HandleFunc("/sessions/{sessionId}/ptys/{ptyId}/links", s.poolModeGuard(s.requireLocalPTYAuth(s.handleLinksLocal)))
+	// Type into this PTY's own terminal (pool mode: the Unix socket's /input). REVISION: self-input-v1
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/input", s.poolModeGuard(s.requireLocalPTYAuth(s.handleSelfInputLocal)))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/screen", s.poolModeGuard(s.requireLocalPTYAuth(s.handleOwnScreenLocal)))
+
 	// Anthropic key — pool-guarded: in pool mode, hooks.go writes the Unix socket URL
 	// (/anthropic-key on /run/orcabot/privileged.sock) into settings.local.json, so no
 	// pool PTY process ever holds the TCP URL or X-Api-Key-Token. poolModeGuard returns
@@ -619,8 +636,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleListPTYs)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeletePTY)))
+	// A terminal's leftover background processes, for the restart dialog (bgproc.go).
+	// REVISION: main-v53-background-processes
+	mux.HandleFunc("GET /sessions/{sessionId}/background-processes", s.requireMachine(s.auth.RequireAuthFunc(s.handleListBackgroundProcesses)))
+	mux.HandleFunc("POST /sessions/{sessionId}/background-processes/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleStopBackgroundProcesses)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.requireMachine(s.auth.RequireAuthFunc(s.handleWritePty)))
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionEnv)))
+	mux.HandleFunc("POST /sessions/{sessionId}/auto-sleep", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionAutoSleep)))
 	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionMetrics)))
 	mux.HandleFunc("GET /sessions/{sessionId}/control", s.requireMachine(s.auth.RequireAuthFunc(s.handleControlWebSocket)))
 	mux.HandleFunc("POST /sessions/{sessionId}/browser/start", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserStart)))
@@ -655,6 +677,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.requireMachine(s.auth.RequireAuthFunc(s.handleResumeAgent)))
 	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleStоpAgent)))
 	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.requireMachine(s.auth.RequireAuthFunc(s.wsRouter.HandleAgentWebSocket)))
+
+	// Agent blocks: the dashboard owner's chat with a linked outside agent (cmd/server/agentlink.go).
+	// REVISION: agent-link-v1-device-client
+	mux.HandleFunc("GET /sessions/{sessionId}/agent-link/chat", s.requireMachine(s.auth.RequireAuthFunc(s.handleAgentLinkChat)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent-link/chat", s.requireMachine(s.auth.RequireAuthFunc(s.handleAgentLinkChat)))
 
 	// Filesystem
 	mux.HandleFunc("GET /sessions/{sessionId}/files", s.requireMachine(s.auth.RequireAuthFunc(s.handleListFiles)))
@@ -957,7 +984,11 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
 		MCPToken         string `json:"mcp_token"`         // Fresh dashboard token (replaces a dropped one)
-		ModelSelection   *struct {
+		AutoSleep        *bool  `json:"auto_sleep"`        // Dashboard's Auto sleep (absent = leave as is; default on)
+		// The terminal's Auto-approve flagged commands (Gemini CLI): answer its
+		// untrusted-flags prompt with "Allow once". REVISION: main-v52-gemini-auto-approve
+		AutoApproveFlagged bool `json:"auto_approve_flagged"`
+		ModelSelection     *struct {
 			Provider        string `json:"provider"`
 			Model           string `json:"model"`
 			ContextWindow   int    `json:"contextWindow"`
@@ -976,6 +1007,11 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	// REVISION: main-v46-egress-fail-closed
 	if req.MCPToken != "" {
 		session.SetDashboardToken(req.MCPToken)
+	}
+	// The dashboard's Auto sleep rides along too, so a new VM or session learns it
+	// before its first terminal could idle out. REVISION: main-v51-auto-sleep
+	if req.AutoSleep != nil {
+		session.SetAutoSleep(*req.AutoSleep)
 	}
 
 	// Use CreatePTYWithOptions when any optional field is present
@@ -1019,6 +1055,15 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Gemini's untrusted-flags prompt ignores --yolo; when the terminal asks for it,
+	// answer it for an unattended agent. Only that dialog is ever answered, and each
+	// answer is logged. REVISION: main-v52-gemini-auto-approve
+	if req.AutoApproveFlagged && ptyInfo.Hub != nil {
+		approver := geminiapprove.New(ptyInfo.Hub, ptyInfo.ID)
+		ptyInfo.Hub.AddOutputWatcher(approver.Observe)
+		ptyInfo.Hub.AddOnStop(approver.Stop)
 	}
 
 	// Store execution ID and register process-exit callback BEFORE responding.

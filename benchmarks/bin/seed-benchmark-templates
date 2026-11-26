@@ -30,6 +30,22 @@ D1_URL = os.environ.get("D1_URL", "http://127.0.0.1:9001")
 AUTHOR_ID = os.environ.get("AUTHOR_ID", "dev-desktop")
 AUTHOR_NAME = os.environ.get("AUTHOR_NAME", "OrcaBot")
 
+# REVISION: seed-benchmark-templates-v3-auto-sleep-off
+# Benchmark dashboards run unattended (overnight games, long eval matrices), so their
+# templates carry Auto sleep off unless template.json says "autoSleep": true. Needs the
+# dashboard_templates.auto_sleep column (controlplane initializeDatabase / /init-db).
+def auto_sleep(tpl) -> int:
+    return 1 if tpl.get("autoSleep") is True else 0
+
+
+# REVISION: seed-benchmark-templates-v2-stable-id
+# A template's id is derived from its name, so re-seeding keeps it: a dashboards page
+# loaded before a re-seed still creates from the right template. (A fresh id each time
+# made such a page create an empty dashboard: the control plane found no template.)
+def template_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://orcabot.com/benchmark-templates/{name}"))
+
+
 # benchmarks/ root (this file lives in benchmarks/bin/).
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -57,19 +73,19 @@ def discover(filter_dirs):
 
 
 def upsert(tpl):
-    tid = str(uuid.uuid4())
+    tid = template_id(tpl["name"])
     now = datetime.datetime.utcnow().isoformat()
     q("DELETE FROM dashboard_templates WHERE name = ?", [tpl["name"]])
     q(
         """INSERT INTO dashboard_templates
            (id,name,description,category,author_id,author_name,items_json,edges_json,
-            viewport_json,setup_guide,item_count,is_featured,use_count,status,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            viewport_json,setup_guide,auto_sleep,item_count,is_featured,use_count,status,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         [
             tid, tpl["name"], tpl["description"], tpl.get("category", "coding"),
             AUTHOR_ID, AUTHOR_NAME,
             json.dumps(tpl["items"]), json.dumps(tpl["edges"]),
-            json.dumps(tpl.get("viewport")), tpl.get("setupGuide"), len(tpl["items"]),
+            json.dumps(tpl.get("viewport")), tpl.get("setupGuide"), auto_sleep(tpl), len(tpl["items"]),
             1, 0, "approved", now, now,
         ],
     )
@@ -86,16 +102,16 @@ def _sql_lit(v):
 
 def emit_sql(tpl):
     """Emit DELETE+INSERT SQL for a template (for `wrangler d1 execute --file`)."""
-    tid = str(uuid.uuid4())
+    tid = template_id(tpl["name"])
     now = datetime.datetime.utcnow().isoformat()
     cols = ("id,name,description,category,author_id,author_name,items_json,edges_json,"
-            "viewport_json,setup_guide,item_count,is_featured,use_count,status,created_at,updated_at")
+            "viewport_json,setup_guide,auto_sleep,item_count,is_featured,use_count,status,created_at,updated_at")
     vals = [
         tid, tpl["name"], tpl["description"], tpl.get("category", "coding"),
         AUTHOR_ID, AUTHOR_NAME,
         json.dumps(tpl["items"]), json.dumps(tpl["edges"]),
         json.dumps(tpl.get("viewport")) if tpl.get("viewport") is not None else None,
-        tpl.get("setupGuide"), len(tpl["items"]), 1, 0, "approved", now, now,
+        tpl.get("setupGuide"), auto_sleep(tpl), len(tpl["items"]), 1, 0, "approved", now, now,
     ]
     literals = ", ".join(_sql_lit(v) for v in vals)
     return (f"DELETE FROM dashboard_templates WHERE name = {_sql_lit(tpl['name'])};\n"
@@ -117,10 +133,12 @@ def main():
         return
 
     # Ensure the setup_guide column exists (idempotent) so older DBs accept the insert.
-    try:
-        q("ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT", [])
-    except Exception:
-        pass
+    for ddl in ("ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT",
+                "ALTER TABLE dashboard_templates ADD COLUMN auto_sleep INTEGER NOT NULL DEFAULT 1"):
+        try:
+            q(ddl, [])
+        except Exception:
+            pass
     for path in paths:
         tpl = json.loads(path.read_text())
         tid = upsert(tpl)

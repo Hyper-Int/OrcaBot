@@ -1,0 +1,33 @@
+# REVISION: pokerbench-relay-worker-v3-upload-host
+# The public side of a PokerBench table (README "Live page"). Before deploying, set the two
+# hosts below, then: wrangler secret put RELAY_KEY -c benchmarks/pokerbench/relay-worker/wrangler.toml
+name = "pokerbench-relay"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+workers_dev = false
+# Both hosts are custom domains on the orcabot.com zone (UPLOAD_HOST and PUBLIC_HOST below).
+routes = [
+  { pattern = "pokerbench.orcabot.com", custom_domain = true },
+  { pattern = "pokerbench-upload.orcabot.com", custom_domain = true },
+]
+
+# The table page is bundled from the PokerBench package.
+rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = false }]
+
+[[durable_objects.bindings]]
+name = "TABLES"
+class_name = "Table"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Table"]
+
+[vars]
+# Uploads only (the engine terminal's broker is approved for this one host).
+UPLOAD_HOST = "pokerbench-upload.orcabot.com"
+# The public table (only ever the game being played: relay.py), embedded in
+# orcabot.com/benchmarks/pokerbench (frontend/src/components/charts/PokerBenchLive.tsx).
+PUBLIC_HOST = "pokerbench.orcabot.com"
+# Who may embed the page in an iframe: the Orcabot site (and dev, to try it there).
+FRAME_ANCESTORS = "https://orcabot.com https://www.orcabot.com https://dev.orcabot.com"
+

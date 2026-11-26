@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: mcp-ui-handler-v1-error-codes
+// REVISION: mcp-ui-handler-v2-items-from-d1
 
 /**
  * MCP UI Server Handler
@@ -16,6 +16,21 @@
 
 import type { Env, UICommand, DashboardItem, DashboardEdge } from '../types';
 import { checkDashbоardAccess } from '../auth/access';
+import { formatEdge, formatItem } from '../dashboards/handler';
+
+/**
+ * A dashboard's items and edges, from D1 (the source of truth). Not the Durable
+ * Object's copy: that only holds items written through the dashboards API since it
+ * started, so a dashboard just created from a template (populateFromTemplate writes
+ * D1 directly) listed as empty, and the setup walkthrough rebuilt it on top.
+ */
+async function itemsFromD1(env: Env, dashboardId: string): Promise<{ items: DashboardItem[]; edges: DashboardEdge[] }> {
+  const [items, edges] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM dashboard_items WHERE dashboard_id = ?`).bind(dashboardId).all(),
+    env.DB.prepare(`SELECT * FROM dashboard_edges WHERE dashboard_id = ?`).bind(dashboardId).all(),
+  ]);
+  return { items: items.results.map(formatItem), edges: edges.results.map(formatEdge) };
+}
 
 // MCP Tool definitions for UI control
 export const UI_TOOLS = [
@@ -484,9 +499,7 @@ export async function callTool(
 
   // Special case: list_items doesn't send a UI command, it queries state directly
   if (toolName === 'list_items') {
-    const dо = getDashboardDO(env, dashboardId);
-    const response = await dо.fetch(new Request('http://do/items', { method: 'GET' }));
-    const data = await response.json() as { items: DashboardItem[]; edges: DashboardEdge[] };
+    const data = await itemsFromD1(env, dashboardId);
 
     return Response.json({
       content: [
@@ -696,15 +709,7 @@ export async function getItems(env: Env, dashboardId: string, userId?: string): 
     }
   }
 
-  const dо = getDashboardDO(env, dashboardId);
-  const response = await dо.fetch(new Request('http://do/items', { method: 'GET' }));
-
-  if (!response.ok) {
-    return Response.json(
-      { error: 'E79165: Failed to get dashboard items' },
-      { status: 500 }
-    );
-  }
-
-  return response;
+  // From D1, the source of truth: the Durable Object only learns about items written
+  // through the dashboards API, so a dashboard just made from a template looked empty.
+  return Response.json(await itemsFromD1(env, dashboardId));
 }

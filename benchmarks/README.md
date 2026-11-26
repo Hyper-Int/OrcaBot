@@ -14,6 +14,7 @@ results surface in a browser/note block.
 | SWE-bench (Lite/Verified/Full) | [`swebench/`](swebench/) | ✅ yes | Inference on host + **Docker-per-task** eval (Modal or DinD) |
 | SWE-bench Pro (public 731) | [`swebench-pro/`](swebench-pro/) | ✅ yes | Inference on host + **Docker-per-task** eval (`--use_local_docker` or Modal) |
 | Terminal-Bench 2.1 | [`terminal-bench/`](terminal-bench/) | ✅ yes | **Harbor** harness; Docker-per-task (or `--env daytona`/Modal remote) |
+| PokerBench | [`pokerbench/`](pokerbench/) | ✅ yes | **Host**: an engine owns the cards; agents and models play hold'em (2–10 seats) through a `poker` CLI; skill, bluffing + cheat detection |
 | FrontierCode (Diamond) | [`frontiercode/`](frontiercode/) | ❌ no | **Closed / submission-only** — no public harness, see the note |
 
 ## Two architecture families

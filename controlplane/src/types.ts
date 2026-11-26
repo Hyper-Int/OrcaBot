@@ -96,6 +96,12 @@ export interface Env {
   /** Gemini API key for Orcabot chat interface.
    *  Set via: wrangler secret put GEMINI_ORCABOT_KEY */
   GEMINI_ORCABOT_KEY?: string;
+  /** Agent hub that outside AI agents (Agent blocks) connect to; it relays their
+   *  end-to-end encrypted messages. Example: https://agents.example.workers.dev */
+  AGENT_HUB_URL?: string;
+  /** Shared secret for issuing hub owner identities to Orcabot users.
+   *  Set via: wrangler secret put AGENT_HUB_PARTNER_SECRET */
+  AGENT_HUB_PARTNER_SECRET?: string;
   /** Bridge service URL for persistent messaging connections (WhatsApp personal, Matrix sync).
    *  Example: https://orcabot-bridge.fly.dev */
   BRIDGE_URL?: string;
@@ -178,12 +184,15 @@ export interface Dashboard {
   /** Desktop: source cloud dashboard id when this was downloaded from a cloud
    *  account; null/absent for cloud-native and purely-local dashboards. */
   cloudId?: string | null;
+  /** Auto sleep (default true): false keeps the dashboard's terminals and VM running
+   *  when nobody is watching (src/dashboards/auto-sleep.ts). */
+  autoSleep?: boolean;
 }
 
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook' | 'benchmark';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook' | 'benchmark' | 'agent';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };

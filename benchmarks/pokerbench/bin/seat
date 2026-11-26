@@ -1,0 +1,639 @@
+#!/usr/bin/env bash
+# Copyright 2026 Rob Macrae. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-Proprietary
+
+# REVISION: pokerbench-seat-v15-agent-info-per-game
+# A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
+# seat by being linked to the engine terminal on the canvas; its seat is named after the
+# terminal. Two kinds of seat terminal use it:
+#
+# An agent terminal (Claude Code, Codex, Gemini CLI) runs its agent interactively, like
+# any Orcabot agent terminal: you log in there as usual. Its boot command starts this
+# script quietly in the background, then the agent:
+#
+#   MODEL=                  # blank: the default model
+#   export MODEL
+#   ( until [ -r /tmp/pokerbench/seat.sh ]; do sleep 3; done
+#     until bash /tmp/pokerbench/seat.sh helper anthropic; do sleep 10; done ) >/dev/null 2>&1 &
+#   exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions
+#
+#   The helper (vendor: anthropic | openai | google | antigravity) checks the seat in once the agent is
+#   signed in and at its prompt (until then the table page says what's missing), and at
+#   Start types the poker prompt into this terminal (Orcabot's self-input). The agent
+#   plays through the `poker` command, which finds its seat from the link. Its name is
+#   given by vendor so the boot command names the agent only where it starts it: Orcabot
+#   recognises the agent (and the Codex model picker edits) from that word.
+#
+# A bot terminal (a model through its API, or the house bot) runs this script in the
+# foreground: `exec bash /tmp/pokerbench/seat.sh`, with PLAYER (api | house), MODEL,
+# PROVIDER and EFFORT (api), STRATEGY (house) as defaults that the table page can change
+# until Start. SEAT: a seat name from the engine's SEATS, for a terminal the engine can't
+# see links for (an older sandbox).
+#
+# A seat terminal that restarts during a game (closed, or stopped by the sandbox) rejoins
+# it: a bot terminal plays on, and an agent terminal's helper gives the fresh agent the
+# prompt with a note that the game is under way. The engine terminal restarting doesn't
+# need any of this: the game carries on (RESUME=auto) and the `poker` client and the
+# bots wait for it to come back.
+set -u
+PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
+REVISION=pokerbench-seat-v15-agent-info-per-game
+SOCK=/run/orcabot/privileged.sock
+MODE="${1:-play}"
+
+engine_up() {
+  [ -r "$PUB/engine.env" ] && . "$PUB/engine.env" && curl -sf -o /dev/null --max-time 3 "$POKER_URL/api/health"
+}
+
+# Which seat this terminal plays: the engine maps linked terminals to seats.
+# (No python here: it runs every few seconds. seats.json is one "key": "value" per line.)
+my_seat() {
+  local s=
+  [ -n "${ORCABOT_PTY_ID:-}" ] && s=$(sed -n "s/^ *\"${ORCABOT_PTY_ID}\": \"\([^\"]*\)\".*/\1/p" "$PUB/seats.json" 2>/dev/null | head -1)
+  if [ -z "$s" ] && [ -n "${SEAT:-}" ]; then  # a seat from SEATS (no links)
+    s=$(python3 -c 'import json,os,sys
+d=json.load(open(sys.argv[1])); print(os.environ["SEAT"] if os.environ["SEAT"] in d.get("static",[]) else "")' "$PUB/seats.json" 2>/dev/null)
+  fi
+  echo "$s"
+}
+
+api() {  # method path [json body]: as this seat (its token if readable, else by OS user)
+  local tok=()
+  [ -r "$POKER_TOKENS_DIR/$SEAT.token" ] && tok=(-H "X-Seat-Token: $(cat "$POKER_TOKENS_DIR/$SEAT.token")")
+  curl -s --max-time 10 -X "$1" -H "X-Poker-Seat: $SEAT" ${tok[@]+"${tok[@]}"} -H 'Content-Type: application/json' \
+    ${3:+--data-binary "$3"} "$POKER_URL$2"
+}
+
+# What to play: sets P_KIND P_MODEL P_PROVIDER P_EFFORT P_STRATEGY P_REV P_STATUS P_IN P_LABEL.
+setup() {
+  local out
+  out=$(api POST /api/seat/setup "{\"default\": $DEFAULT}") || return 1
+  python3 -c 'import json,shlex,sys
+d=json.loads(sys.argv[1]); p=d.get("player") or {}
+kind=p.get("kind","")
+names={"claude-code":"Claude Code","codex":"Codex","gemini-cli":"Gemini CLI","antigravity-cli":"Antigravity CLI","house":"House bot","agent":"Agent block"}
+label={"api":"%s/%s (API)"%(p.get("provider"),p.get("model"))}.get(kind) or names.get(kind,kind)
+if kind in ("claude-code","codex","gemini-cli","antigravity-cli") and p.get("model"): label+=" (%s)"%p["model"]
+v={"P_KIND":kind,"P_MODEL":p.get("model",""),"P_PROVIDER":p.get("provider",""),"P_EFFORT":p.get("effort",""),
+   "P_STRATEGY":p.get("strategy","tight"),"P_REV":d.get("rev",0),"P_STATUS":d.get("status",""),
+   "P_IN":"1" if d.get("in_game") else "0","P_LABEL":label}
+print(" ".join("%s=%s"%(k,shlex.quote(str(x))) for k,x in v.items()))' "$out" 2>/dev/null
+}
+
+reported= reported_at=0
+report() {  # state message: why this seat can't play yet (the table page shows it); again only if it changed, or every 30s
+  local now; now=$(date +%s)
+  [ "$1:$2" = "$reported" ] && [ "$now" -lt $((reported_at + 30)) ] && return 0
+  api POST /api/seat/status "$(python3 -c 'import json,sys; print(json.dumps({"state":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2")" >/dev/null
+  reported="$1:$2"; reported_at=$now
+}
+
+# Which model(s) the agent used in this game so far, from its own logs (seat_agentlogs.py,
+# published by the engine): checked every 60s once it has its prompt, sent when it changed.
+# Counted from the table's creation (the game id), so a rejoined agent's earlier turns count.
+# "Changed" is per game: a Codex game is one long turn, so every game reads the same
+# ({"gpt-6.2-astra": 1} turns) and, compared across games, no game after a helper's first
+# was ever reported (series of 2026-11-23: every Codex seat's effort "unknown").
+# REVISION: pokerbench-seat-v15-agent-info-per-game
+agent_reported=; agent_at=0
+report_agent() {
+  local now since info; now=$(date +%s)
+  [ "$now" -lt $((agent_at + 60)) ] && return 0
+  agent_at=$now
+  [ -r "$PUB/seat_agentlogs.py" ] || return 0
+  since=$(printf '%s' "$POKER_GAME" | sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]{2})([0-9]{2})([0-9]{2}).*/\1-\2-\3T\4:\5:\6Z/')
+  info=$(timeout 20 python3 "$PUB/seat_agentlogs.py" --agent "$PLAYER" --since "$since" --home "$HOME" 2>/dev/null) || return 0
+  case "$info" in *'"models"'*) ;; *) return 0 ;; esac
+  [ "$POKER_GAME $info" = "$agent_reported" ] && return 0
+  api POST /api/seat/agent "$info" >/dev/null && agent_reported="$POKER_GAME $info" && echo "$(date -u +%T) agent: $info"
+}
+
+# Codex started with --no-daemon? Without it, Codex runs its shell commands in a background
+# server shared by every Codex on the VM, with the environment of the terminal that started
+# it, so `poker` would find that terminal's seat (or none) instead of this one's. The helper
+# is a child of the agent (or of a shell that started it): look at it and a few ancestors.
+codex_own_server() {
+  local pid=${POKER_TEST_PPID:-$PPID} proc=${POKER_TEST_PROC:-/proc} i args
+  for i in 1 2 3 4; do
+    [ -r "$proc/$pid/cmdline" ] || return 0  # can't tell (not Linux): don't block the seat
+    args=$(tr '\0' ' ' < "$proc/$pid/cmdline")
+    case "$args" in
+      *codex*--no-daemon*|*--no-daemon*codex*) return 0 ;;
+      *bin/codex*|codex\ *) return 1 ;;
+    esac
+    pid=$(awk '{print $4}' "$proc/$pid/stat" 2>/dev/null)
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 0
+  done
+  return 0
+}
+
+# Can this player play here? Sets NEED (empty if it can), HOWTO and KEY. Orcabot's secrets
+# broker puts a placeholder in a key's variable, so a set variable means the key is there.
+check() {
+  NEED= HOWTO= KEY=
+  case "$P_KIND" in
+    claude-code)
+      [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.claude/.credentials.json" ] \
+        || { NEED="Claude Code isn't signed in"; HOWTO="type claude, run /login, then /exit"; KEY=ANTHROPIC_API_KEY; } ;;
+    codex)
+      [ -n "${OPENAI_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "${CODEX_HOME:-$HOME/.codex}/auth.json" ] \
+        || { NEED="Codex isn't signed in"; HOWTO="type codex login --device-auth"; KEY=OPENAI_API_KEY; }
+      [ -z "$NEED" ] && ! codex_own_server \
+        && NEED="Codex is using its shared background server, which runs every Codex terminal's commands as the first one's (wrong seat): add --no-daemon to the codex command in this terminal's boot command and restart it" ;;
+    gemini-cli)
+      [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || [ -s "$HOME/.gemini/oauth_creds.json" ] \
+        || { NEED="Gemini CLI isn't signed in"; HOWTO="type gemini and choose Sign in with Google, then /quit"; KEY=GEMINI_API_KEY; } ;;
+    antigravity-cli)
+      # Antigravity CLI (agy): not in the sandbox image yet. Its Google sign-in lands in a
+      # 0600 file when there is no keyring (Orcabot's VMs); an API key needs modelProvider
+      # "gemini" in its settings too; AGY_ADC_AUTH uses Google Cloud credentials.
+      if ! command -v agy >/dev/null 2>&1; then
+        NEED="Antigravity CLI (agy) isn't installed on this VM: in a terminal, run curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin, then restart this one"
+      elif [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] || [ "${AGY_ADC_AUTH:-}" = true ] \
+        || { [ -n "${GEMINI_API_KEY:-}" ] && grep -qs '"modelProvider"[[:space:]]*:[[:space:]]*"gemini"' "$HOME/.gemini/antigravity-cli/settings.json"; }; then
+        :
+      else
+        NEED="Antigravity CLI isn't signed in"; HOWTO="type agy, choose Google OAuth and sign in, then /quit"
+      fi ;;
+    api)
+      case "$P_PROVIDER" in anthropic) KEY=ANTHROPIC_API_KEY;; openai) KEY=OPENAI_API_KEY;; *) KEY=GEMINI_API_KEY;; esac
+      [ -n "${!KEY:-}" ] || NEED="$P_LABEL needs an API key" ;;
+    house) ;;
+    "") NEED="no player chosen: pick one on the table page" ;;
+    *) NEED="this terminal can't play $P_KIND" ;;
+  esac
+}
+
+info() {  # how the seat introduces itself (table page, report)
+  case "$P_KIND" in
+    claude-code) echo "anthropic/claude-code${P_MODEL:+ ($P_MODEL)}" ;;
+    codex) echo "openai/codex${P_MODEL:+ ($P_MODEL)}" ;;
+    gemini-cli) echo "google/gemini-cli${P_MODEL:+ ($P_MODEL)}" ;;
+    antigravity-cli) echo "google/antigravity-cli${P_MODEL:+ ($P_MODEL)}" ;;
+    api) echo "$P_PROVIDER/$P_MODEL (API)" ;;
+    house) echo "house/bot ($P_STRATEGY)" ;;
+  esac
+}
+
+# -- this terminal's own screen and keyboard (Orcabot: the privileged socket in the PTY
+#    pool, else MCPLocal with this terminal's MCP secret) ----------------------------------
+own() {  # method path [json]
+  if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
+    curl -s --max-time 15 -X "$1" -H 'Content-Type: application/json' ${3:+--data-binary "$3"} "$POKER_OWN_URL$2"
+  elif [ -S "$SOCK" ]; then
+    curl -s --max-time 15 --unix-socket "$SOCK" -X "$1" -H 'Content-Type: application/json' ${3:+--data-binary "$3"} "http://localhost$2"
+  else
+    curl -s --max-time 15 -X "$1" -H "X-MCP-Secret: ${ORCABOT_MCP_SECRET:-}" -H 'Content-Type: application/json' \
+      ${3:+--data-binary "$3"} "http://127.0.0.1:${ORCABOT_MCP_PORT:-8081}/sessions/${ORCABOT_SESSION_ID:-}/ptys/${ORCABOT_PTY_ID:-}$2"
+  fi
+}
+
+# A setup question the agent is still waiting on (login, trust this folder, ...): this
+# terminal's raw recent output (Orcabot /screen, with its size), rendered as the screen
+# shows it now (seat_screen.py), since an agent's interface redraws in place and an
+# answered question stays in the output. Empty if none, or if this Orcabot can't say.
+screen_sum= WAIT_Q= AGENT_STATE=
+waiting_on() {  # sets WAIT_Q, and AGENT_STATE: question|working|idle|starting (seat_screen.py), empty if unknown
+  local hdr body rows cols sum
+  hdr=$(mktemp) body=$(mktemp)
+  if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
+    curl -s --max-time 15 -D "$hdr" -o "$body" "$POKER_OWN_URL/screen"
+  elif [ -S "$SOCK" ]; then
+    curl -s --max-time 15 --unix-socket "$SOCK" -D "$hdr" -o "$body" "http://localhost/screen"
+  else
+    curl -s --max-time 15 -H "X-MCP-Secret: ${ORCABOT_MCP_SECRET:-}" -D "$hdr" -o "$body" \
+      "http://127.0.0.1:${ORCABOT_MCP_PORT:-8081}/sessions/${ORCABOT_SESSION_ID:-}/ptys/${ORCABOT_PTY_ID:-}/screen"
+  fi
+  if head -1 "$hdr" | grep -q " 200"; then
+    rows=$(grep -i '^x-screen-rows:' "$hdr" | tr -dc 0-9); cols=$(grep -i '^x-screen-cols:' "$hdr" | tr -dc 0-9)
+    sum="$(cksum < "$body") $rows $cols"
+    if [ "$sum" != "$screen_sum" ]; then  # render only when the screen has changed
+      local out
+      out=$(python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" --state < "$body" 2>/dev/null)
+      case "$out" in
+        *"|"*) AGENT_STATE=${out%%|*}; WAIT_Q=${out#*|} ;;
+        *) AGENT_STATE=; WAIT_Q=$out ;;  # an older seat_screen.py
+      esac
+      screen_sum=$sum
+    fi
+  else
+    WAIT_Q= AGENT_STATE=
+  fi
+  rm -f "$hdr" "$body"
+}
+
+type_in() {  # file [clear-command] [extra line]: give the agent the prompt, as if pasted at its prompt
+  if [ -n "${2:-}" ]; then
+    own POST /input "{\"text\": \"$2\", \"enter\": true}" >/dev/null; sleep 4
+  fi
+  own POST /input "$(python3 -c 'import json,sys; t=open(sys.argv[1]).read().rstrip("\n")
+if sys.argv[2]: t += "\n\n" + sys.argv[2]
+print(json.dumps({"text": t, "paste": True, "enter": True}))' "$1" "${3:-}")"
+}
+# Before typing the prompt: wait (up to $1 s) until the agent has drawn its input box, so
+# the prompt isn't typed into an agent still starting up (it would be lost). Unknown
+# (this Orcabot can't show the screen): go ahead. REVISION: pokerbench-seat-v12-prompt-check
+wait_input_box() {
+  local until=$(( $(date +%s) + $1 )) seen=0
+  while [ "$(date +%s)" -lt "$until" ]; do
+    waiting_on
+    case "$AGENT_STATE" in
+      ""|question) return 0 ;;
+      idle|working) seen=$((seen + 1)); [ "$seen" -ge 2 ] && return 0 ;;
+      *) seen=0 ;;
+    esac
+    sleep 2
+  done
+  return 1
+}
+# Seconds since the seat last used the game (`poker`), from the engine: "never" if it
+# hasn't, "unknown" if the engine can't say (an older one).
+last_play_ago() {
+  api GET /api/seat/activity | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+v=d.get("last_play_s_ago", "unknown") if isinstance(d, dict) else "unknown"
+print("never" if v is None else v if v == "unknown" else int(v))' 2>/dev/null || echo unknown
+}
+took() {  # ago t0: the seat used `poker` since t0
+  case "$1" in never|unknown|"") return 1 ;; esac
+  [ "$1" -le $(( $(date +%s) - $2 )) ]
+}
+# Give the agent the game prompt and check it took: the seat must use `poker` within
+# PROMPT_CHECK_S. If it hasn't and its screen sits still, not busy, the prompt was lost
+# (typed before the agent could take it): type it again, up to twice. An agent that got
+# it and then stalls is left alone: that is the model's (or harness's) doing, and part of
+# what is measured. Each prompt is logged with the engine (the report counts them).
+PROMPT_CHECK_S=${POKER_PROMPT_CHECK_S:-90}
+give_prompt() {  # file clear-command note rejoin(0|1)
+  local attempt t0 ago clear=$2 still sum
+  for attempt in 1 2 3; do
+    wait_input_box 45 || echo "$(date -u +%T) no input box after 45s (screen: ${AGENT_STATE:-?}); typing anyway"
+    type_in "$1" "$clear" "$3" || return 1
+    clear=  # cleared once is enough
+    api POST /api/seat/prompted "{\"attempt\": $attempt, \"rejoin\": $([ "$4" = 1 ] && echo true || echo false)}" >/dev/null
+    t0=$(date +%s)
+    still=0 sum=
+    while [ $(( $(date +%s) - t0 )) -lt "$PROMPT_CHECK_S" ]; do
+      sleep 3
+      ago=$(last_play_ago)
+      [ "$ago" = unknown ] && return 0  # an older engine: can't check
+      took "$ago" "$t0" && return 0     # it used `poker`: it took
+    done
+    # Not yet. Lost, or just slow? Watch the screen for 12s: busy or changing means it's working.
+    for still in 1 2 3 4; do
+      waiting_on
+      { [ "$AGENT_STATE" = working ] || [ -z "$AGENT_STATE" ] || { [ -n "$sum" ] && [ "$screen_sum" != "$sum" ]; }; } && return 0
+      sum=$screen_sum; sleep 3
+    done
+    took "$(last_play_ago)" "$t0" && return 0
+    [ "$attempt" -lt 3 ] && echo "$(date -u +%T) the prompt didn't take (no \`poker\` use in ${PROMPT_CHECK_S}s, screen still): typing it again"
+  done
+  echo "$(date -u +%T) the prompt still didn't take after 3 tries; leaving it"
+  return 0
+}
+MIDGAME="Note: this game is already under way (this terminal restarted during it). Your seat is still in it: start with \`poker wait\`."
+
+# This terminal's defaults, as JSON for the engine.
+if [ "$MODE" = helper ]; then
+  case "${2:-}" in
+    anthropic) PLAYER=claude-code; CLEAR=/clear ;;
+    openai) PLAYER=codex; CLEAR=/new ;;
+    google) PLAYER=gemini-cli; CLEAR=/clear ;;
+    antigravity) PLAYER=antigravity-cli; CLEAR=/clear ;;
+    *) echo "seat.sh helper: vendor must be anthropic, openai, google or antigravity"; exit 2 ;;
+  esac
+  export PLAYER
+fi
+DEFAULT=$(python3 -c 'import json,os
+e=os.environ.get
+p={"kind":e("PLAYER") or "house"}
+for k in ("model","provider","effort","strategy"):
+    v=e(k.upper())
+    if v: p[k]=v
+print(json.dumps(p))')
+
+# ---- an agent terminal's launcher: its own OS user, private home (as root) -------------------
+# REVISION: pokerbench-seat-v11-fresh-agent-each-game
+#   exec bash /tmp/pokerbench/seat.sh agent <vendor> -- <agent command...>
+# Every Orcabot terminal runs as root and shares one HOME (/workspace/.home), so each agent
+# could read the others' live transcripts (their hole cards and reasoning) and the engine's
+# files. Outside Orcabot's PTY pool (off on Fly), a seat gets its own OS user instead
+# (pokerseat-<uid>, one per seat name, stable across restarts) and a private home
+# (/workspace/.pokerbench/seats/<seat>, 0700): the helper and the agent run as that user
+# with umask 077. The engine binds the seat to that user when it checks in, so the report
+# shows seat isolation enforced. Each start:
+#   - moves the seat's earlier conversations/notes into a root-only archive, so the agent
+#     starts with no memory of earlier games (a series replays the same deals);
+#   - syncs the login with the dashboard's shared home: credentials newer-wins both ways
+#     (a seat that refreshed its token hands it back), other setup state copied in once.
+# Not root, no setpriv, or POKER_SEAT_USERS=off: helper and agent run as this user, as before.
+if [ "$MODE" = agent ]; then
+  VENDOR="${2:-}"
+  shift 2 2>/dev/null || shift $#
+  [ "${1:-}" = "--" ] && shift
+  case "$VENDOR" in anthropic|openai|google|antigravity) ;; *)
+    echo "seat.sh agent: vendor must be anthropic, openai, google or antigravity"; exec bash ;;
+  esac
+  if [ $# -eq 0 ] || ! command -v "$1" >/dev/null 2>&1; then
+    if [ "$VENDOR" = antigravity ]; then
+      echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:"
+      echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin"
+      echo "then restart this terminal."
+    else
+      echo "${1:-the agent} is not installed on this VM."
+    fi
+    exec bash
+  fi
+  SHARED_HOME="$HOME"
+  ROOT="${POKER_SEATS_ROOT:-/workspace/.pokerbench}"
+  CHOWN="${POKER_TEST_CHOWN:-chown}"  # tests (not root) swap these two
+  IS_ROOT=; { [ "$(id -u)" = 0 ] || [ -n "${POKER_TEST_ROOT:-}" ]; } && IS_ROOT=1
+  if [ -z "$IS_ROOT" ] || ! command -v setpriv >/dev/null 2>&1 || [ "${POKER_SEAT_USERS:-on}" = off ]; then
+    echo "[seat] REVISION: $REVISION: no seat user (not root, no setpriv, or POKER_SEAT_USERS=off)" >&2
+    [ "$VENDOR" = antigravity ] && { mkdir -p "$HOME/.gemini/antigravity-cli/log"
+      set -- "$@" --log-file "$HOME/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"; }
+    ( until bash "$PUB/seat.sh" helper "$VENDOR"; do sleep 10; done ) >/dev/null 2>&1 &
+    exec "$@"
+  fi
+
+  # The seat: named after this terminal by the engine (its link), so wait for the engine.
+  SEAT=$(my_seat)
+  if [ -z "$SEAT" ]; then
+    echo "Waiting for the PokerBench engine to seat this terminal (link it to the engine terminal)..."
+    until SEAT=$(my_seat); [ -n "$SEAT" ]; do sleep 3; done
+  fi
+  mkdir -p "$ROOT/seats" "$ROOT/archive" && chmod 711 "$ROOT" "$ROOT/seats" && chmod 700 "$ROOT/archive"
+  # A stable uid per seat name (3000-3999), and a passwd entry (agents look their user up).
+  U=$( (flock 9
+        python3 - "$ROOT/uids.json" "$SEAT" <<'PY'
+import json, os, sys
+path, seat = sys.argv[1], sys.argv[2]
+try:
+    uids = json.load(open(path))
+except (OSError, ValueError):
+    uids = {}
+if seat not in uids:
+    used = set(uids.values())
+    uids[seat] = next(u for u in range(3000, 4000) if u not in used)
+    tmp = path + ".new"
+    with open(tmp, "w") as f:
+        json.dump(uids, f, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+print(uids[seat])
+PY
+        ) 9>"$ROOT/.lock")
+  case "$U" in ''|*[!0-9]*) echo "seat.sh agent: no uid for seat $SEAT"; exec bash ;; esac
+  NAME="pokerseat-$U"
+  H="$ROOT/seats/$SEAT"
+  PASSWD="${POKER_PASSWD_DIR:-/etc}"
+  ( flock 9
+    grep -q "^$NAME:" "$PASSWD/passwd" || echo "$NAME:x:$U:$U:PokerBench seat $SEAT:$H:/bin/bash" >> "$PASSWD/passwd"
+    grep -q "^$NAME:" "$PASSWD/group" || echo "$NAME:x:$U:" >> "$PASSWD/group" ) 9>"$ROOT/.lock"
+  mkdir -p "$H" && $CHOWN "$U:$U" "$H" && chmod 700 "$H"
+
+  # Earlier conversations and notes: into the root-only archive (kept for the record).
+  case "$VENDOR" in
+    anthropic) HIST=".claude/projects .claude/history.jsonl .claude/todos .claude/shell-snapshots .claude/session-env .claude/file-history .claude/paste-cache" ;;
+    openai) HIST=".codex/sessions .codex/history.jsonl .codex/session_index.jsonl .codex/memories_1.sqlite .codex/thread_history_1.sqlite .codex/logs_2.sqlite .codex/state_5.sqlite" ;;
+    google) HIST=".gemini/tmp .gemini/history" ;;
+    antigravity) HIST=".gemini/antigravity-cli/conversations .gemini/antigravity-cli/brain .gemini/antigravity-cli/annotations .gemini/antigravity-cli/implicit .gemini/antigravity-cli/conversation_summaries.db .gemini/antigravity-cli/history.jsonl .gemini/antigravity-cli/jetbox_summaries_proto.pb .gemini/antigravity-cli/log" ;;
+  esac
+  archive() {
+    local A p
+    A="$ROOT/archive/$SEAT/$(date -u +%Y%m%dT%H%M%SZ)-${ORCABOT_PTY_ID:-local}"
+    for p in $HIST; do
+      if [ -e "$H/$p" ]; then mkdir -p "$A/$(dirname "$p")" && mv "$H/$p" "$A/$p"; fi
+    done
+  }
+
+  # The login. A seat keeps its own once it has one: one without a login is seeded from the
+  # shared login, and the shared home is seeded from a seat's only when it has none. Never
+  # "newer wins": several agents renewing copies of one OAuth login cancel each other's
+  # (a refresh replaces the refresh token, so the other copies stop working), and passing
+  # the newest copy around at every game start spread one login to every seat of a vendor.
+  # On 2026-11-24 every Claude seat was logged out within a minute, mid-game.
+  # Setup state: copied in if the seat lacks it. REVISION: pokerbench-seat-v13-own-login
+  case "$VENDOR" in
+    anthropic) CREDS=".claude/.credentials.json"; SETUP=".claude.json .claude/settings.json" ;;
+    openai) CREDS=".codex/auth.json"; SETUP=".codex/config.toml .codex/version.json" ;;
+    google) CREDS=".gemini/oauth_creds.json .gemini/google_accounts.json"; SETUP=".gemini/settings.json .gemini/installation_id .gemini/state.json .gemini/trustedFolders.json" ;;
+    antigravity) CREDS=".gemini/antigravity-cli/antigravity-oauth-token"; SETUP=".gemini/antigravity-cli/settings.json .gemini/antigravity-cli/installation_id .gemini/antigravity-cli/cache/onboarding.json .gemini/config/mcp_config.json .gemini/config/config.json" ;;
+  esac
+  sync_login() {
+    local p
+    for p in $CREDS; do
+      if [ -s "$H/$p" ]; then
+        [ -s "$SHARED_HOME/$p" ] && continue  # its own login: left alone
+        mkdir -p "$(dirname "$SHARED_HOME/$p")" && cp "$H/$p" "$SHARED_HOME/$p.pokerbench" \
+          && chmod 600 "$SHARED_HOME/$p.pokerbench" && mv "$SHARED_HOME/$p.pokerbench" "$SHARED_HOME/$p"
+        echo "[seat] seat $SEAT's ${p##*/} seeds the shared login (it had none)" >&2
+      elif [ -s "$SHARED_HOME/$p" ]; then
+        mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"
+        echo "[seat] seat $SEAT has no ${p##*/}: given a copy of the shared login (log in here for its own)" >&2
+      fi
+    done
+    for p in $SETUP; do
+      [ -e "$H/$p" ] || [ ! -e "$SHARED_HOME/$p" ] || { mkdir -p "$(dirname "$H/$p")" && cp -p "$SHARED_HOME/$p" "$H/$p"; }
+    done
+    if [ "$VENDOR" = antigravity ]; then mkdir -p "$H/.gemini/antigravity-cli/log"; fi
+    # Codex checks for a new version in the background and, at its next start, opens an
+    # "Update available" dialog that swallows the game prompt: on 2026-11-24 a release
+    # during game 8 stalled all three Codex seats at game 9's start. No update check.
+    # (A top-level key, so it goes first, before any [table].) REVISION: pokerbench-seat-v14-codex-no-update
+    if [ "$VENDOR" = openai ]; then
+      local c="$H/.codex/config.toml"
+      mkdir -p "$H/.codex"
+      grep -qs '^check_for_update_on_startup' "$c" \
+        || { { echo "check_for_update_on_startup = false"; cat "$c" 2>/dev/null; } > "$c.pokerbench" && mv "$c.pokerbench" "$c"; }
+    fi
+    $CHOWN -R "$U:$U" "$H" && chmod -R go-rwx "$H"
+  }
+
+  # Off limits to other OS users: the shared home (every other terminal's transcripts,
+  # earlier games included) and the results (a series replays the same deals: an earlier
+  # game's hand histories show every card). Root terminals and the file sidebar still see them.
+  [ "$SHARED_HOME" != / ] && [ -d "$SHARED_HOME" ] && chmod o-rwx "$SHARED_HOME"
+  RESULTS="${POKER_RESULTS_DIR:-/workspace/pokerbench-results}"
+  [ -d "$RESULTS" ] && chmod o-rwx "$RESULTS"
+
+  # Its log, which the helper reads for the model used.
+  [ "$VENDOR" = antigravity ] && set -- "$@" --log-file "$H/.gemini/antigravity-cli/log/seat-${ORCABOT_PTY_ID:-local}.log"
+  echo "[seat] REVISION: $REVISION: seat $SEAT runs as $NAME (uid $U), home $H" >&2
+  umask 077
+  archive; sync_login
+  ( until setpriv --reuid="$U" --regid="$U" --clear-groups \
+            env HOME="$H" USER="$NAME" LOGNAME="$NAME" bash "$PUB/seat.sh" helper "$VENDOR"; do sleep 10; done
+  ) >/dev/null 2>&1 &
+
+  # The agent, in the foreground, as the seat's user. This stays its parent: when it exits
+  # (its helper ends it when a new game begins, so every game starts with a fresh agent and
+  # nothing of the last one on disk), its conversation is archived, the login synced, and a
+  # fresh one started. One that keeps exiting at once leaves a shell instead.
+  # REVISION: pokerbench-seat-v11-fresh-agent-each-game
+  trap ':' INT
+  quick=0
+  while :; do
+    started=$(date +%s)
+    setpriv --reuid="$U" --regid="$U" --clear-groups env HOME="$H" USER="$NAME" LOGNAME="$NAME" "$@"
+    if [ $(( $(date +%s) - started )) -lt 10 ]; then quick=$((quick + 1)); else quick=0; fi
+    if [ "$quick" -ge 3 ] || [ -n "${POKER_TEST_ONCE:-}" ]; then
+      [ -n "${POKER_TEST_ONCE:-}" ] && exit 0
+      echo "The agent keeps exiting at once. A shell (restart this terminal to try again):"; exec bash
+    fi
+    echo; echo "Starting a fresh agent for seat $SEAT (its last conversation is archived)..."
+    archive; sync_login; sleep 1
+  done
+fi
+
+# The agent's launcher (seat.sh agent) is this helper's grandparent (the helper runs in its
+# retry loop); the agent is the launcher's other child. Ending it makes the launcher start a
+# fresh one. False without a launcher (an older boot command): nothing is ended.
+restart_agent() {
+  local loop launcher p agent= i
+  loop=${POKER_TEST_PPID:-$PPID}
+  launcher=$(awk '{print $4}' "/proc/$loop/stat" 2>/dev/null)
+  [ -n "$launcher" ] && tr '\0' ' ' < "/proc/$launcher/cmdline" 2>/dev/null | grep -q 'seat.sh agent ' || return 1
+  for p in /proc/[0-9]*; do
+    [ "${p#/proc/}" = "$loop" ] && continue
+    [ "$(awk '{print $4}' "$p/stat" 2>/dev/null)" = "$launcher" ] && { agent=${p#/proc/}; break; }
+  done
+  [ -n "$agent" ] || return 1
+  kill -TERM "$agent" 2>/dev/null || return 1
+  for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$agent" 2>/dev/null || return 0; sleep 1; done
+  kill -KILL "$agent" 2>/dev/null; return 0
+}
+
+# ---- an agent terminal's helper: in the background, no output on the agent's screen ----------
+if [ "$MODE" = helper ]; then
+  exec >>"${TMPDIR:-/tmp}/pokerbench-seat-$(id -u)-${ORCABOT_PTY_ID:-local}.log" 2>&1
+  echo "[seat] REVISION: $REVISION helper ($PLAYER) loaded at $(date -u +%FT%TZ)"
+  ready_at=; ready_game=; given=; given_any=; recheck_at=0; fresh_for=
+  while :; do
+    until engine_up; do sleep 3; done
+    SEAT=$(my_seat)
+    [ -n "$SEAT" ] || { sleep 3; continue; }
+    export POKER_URL POKER_SEAT="$SEAT" POKER_TOKEN_FILE="$POKER_TOKENS_DIR/$SEAT.token"
+    if [ "$POKER_STARTED" = 1 ]; then
+      if [ "$given" != "$POKER_GAME" ]; then
+        case " $POKER_SEATS " in *" $SEAT "*)
+          note=
+          if [ "$ready_game" != "$POKER_GAME" ]; then
+            # This terminal restarted mid-game: a fresh agent, which must be signed in first.
+            P_STATUS=; eval "$(setup)" 2>/dev/null; check
+            if [ -n "$NEED" ]; then echo "$(date -u +%T) can't rejoin yet: $NEED"; sleep 5; continue; fi
+            note=$MIDGAME
+          fi
+          waiting_on
+          if [ -n "$WAIT_Q" ]; then echo "$(date -u +%T) waiting: the agent is showing \"$WAIT_Q\""; sleep 3; continue; fi
+          echo "$(date -u +%T) game $POKER_GAME ${note:+under way, rejoining}${note:-started}: giving the agent its prompt"
+          give_prompt "$PUB/prompt.txt" "${given_any:+$CLEAR}" "$note" "$([ -n "$note" ] && echo 1 || echo 0)" \
+            && given=$POKER_GAME && given_any=1 ;;
+        esac
+      fi
+      [ "$given" = "$POKER_GAME" ] && report_agent
+      sleep 2; continue
+    fi
+    # A new game after this agent played one: a fresh agent (the launcher archives the last
+    # conversation and starts it again), so it remembers nothing of earlier deals. Without
+    # the launcher, its conversation is cleared at Start instead.
+    if [ -n "$given_any" ] && [ "$given" != "$POKER_GAME" ] && [ "$fresh_for" != "$POKER_GAME" ]; then
+      fresh_for=$POKER_GAME
+      if restart_agent; then
+        echo "$(date -u +%T) game $POKER_GAME: started a fresh agent"; given_any=; ready_at=; sleep 8; continue
+      fi
+    fi
+    # Ready for this game: just watch for Start (cheap), and check again every 20s.
+    if [ "$ready_at" = "$POKER_GAME:$SEAT" ] && [ "$(date +%s)" -lt "$recheck_at" ]; then sleep 2; continue; fi
+    P_STATUS=; eval "$(setup)" 2>/dev/null
+    [ -n "$P_STATUS" ] || { sleep 3; continue; }
+    check
+    if [ -z "$NEED" ]; then
+      waiting_on
+      [ -n "$WAIT_Q" ] && NEED="$P_LABEL is waiting for you in its terminal (\"$WAIT_Q\")"
+    elif [ -n "$KEY" ]; then
+      NEED="$NEED: log in in its terminal, or add $KEY in Orcabot's secrets and restart it"
+    fi
+    if [ -n "$NEED" ]; then
+      report needs "$NEED"; ready_at=; ready_game=
+      sleep 3; continue
+    fi
+    if [ "$ready_at" != "$POKER_GAME:$SEAT" ]; then
+      export POKER_SEAT_INFO="$(info)"
+      "$PUB/bin/poker" state >/dev/null || { sleep 3; continue; }  # check in
+      ready_at="$POKER_GAME:$SEAT"; ready_game=$POKER_GAME
+      echo "$(date -u +%T) seat $SEAT ready as $P_LABEL"
+    fi
+    recheck_at=$(( $(date +%s) + 20 ))
+    sleep 2
+  done
+fi
+
+# ---- a bot terminal: in the foreground -------------------------------------------------------
+echo "[seat] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
+# Ctrl-C: a shell. Restart the terminal afterwards to take the seat again.
+trap 'echo; echo "A shell: restart this terminal to take the seat again."; exec bash -i' INT
+said=
+say_once() { [ "$1" = "$said" ] || { echo "$1"; said=$1; }; }
+
+ready_at=; ready_game=; told=
+while :; do
+  until engine_up; do say_once "Waiting for the PokerBench engine..."; sleep 2; done
+  SEAT=$(my_seat)
+  if [ -z "$SEAT" ]; then
+    say_once "Not seated: link this terminal to the PokerBench engine terminal on the canvas to take a seat."
+    sleep 2; continue
+  fi
+  export POKER_URL POKER_SEAT="$SEAT" POKER_TOKEN_FILE="$POKER_TOKENS_DIR/$SEAT.token"
+  if [ "$POKER_STARTED" = 1 ]; then
+    # In this game: play (also after this terminal restarted mid-game: it rejoins).
+    case " $POKER_SEATS " in *" $SEAT "*) break;; esac
+    say_once "Game $POKER_GAME started without this seat. Waiting for the next game..."
+    sleep 3; continue
+  fi
+  # Ready: watch for Start every 2s, ask about a switch on the table page every 6s.
+  if [ "${ready_game:-}" = "$POKER_GAME" ] && [ "$(date +%s)" -lt "${recheck_at:-0}" ]; then sleep 2; continue; fi
+  recheck_at=$(( $(date +%s) + 6 ))
+  P_STATUS=; eval "$(setup)" 2>/dev/null
+  if [ -z "$P_STATUS" ]; then sleep 3; continue; fi  # not seated yet: the engine is catching up
+  if [ "$P_REV:$POKER_GAME:$SEAT" != "$ready_at" ]; then
+    ready_game=
+    check
+    if [ -n "$NEED" ]; then
+      report needs "$NEED"
+      if [ "$told" != "$P_REV:$POKER_GAME:$NEED" ]; then
+        echo; echo "Seat $SEAT can't play as $P_LABEL yet: $NEED."
+        [ -n "$KEY" ] && echo "  Add $KEY in Orcabot's secrets and restart this terminal,"
+        echo "  or choose another player for this seat on the table page."
+        echo "The game can start without this seat."; echo
+        told="$P_REV:$POKER_GAME:$NEED"
+      fi
+      sleep 3; continue
+    fi
+    export POKER_SEAT_INFO="$(info)"
+    "$PUB/bin/poker" state >/dev/null || { sleep 3; continue; }  # check in
+    ready_at="$P_REV:$POKER_GAME:$SEAT"; ready_game=$POKER_GAME; said=
+    echo "Seat $SEAT: ready as $P_LABEL. Waiting for Start on the table page..."
+  fi
+  sleep 2
+done
+
+# The game has started with this seat: play.
+trap - INT
+GAME=$POKER_GAME
+eval "$(setup)" 2>/dev/null
+export POKER_SEAT_INFO="$(info)"
+export PATH="$PUB/bin:$PATH" POKER_CLI="$PUB/bin/poker"
+echo "Seat $SEAT: in the game. Playing game $GAME as $P_LABEL."
+case "$P_KIND" in
+  api)
+    # A fresh request per decision; the call log goes to the results once the game is over.
+    LOG="$HOME/pokerbench-$GAME-$SEAT.calls.jsonl"
+    "$POKER_PB" llm-seat --provider "$P_PROVIDER" --model "$P_MODEL" ${P_EFFORT:+--effort "$P_EFFORT"} --log "$LOG"
+    cp "$LOG" "/workspace/pokerbench-results/$GAME/seats/$SEAT.calls.jsonl" 2>/dev/null ;;
+  house) "$POKER_PB" bot --strategy "$P_STRATEGY" ;;
+  *) echo "This terminal plays bots; an agent plays in its own agent terminal (link one to the engine)." ;;
+esac
+echo "Seat $SEAT: done. Restart this terminal to play the next game."
+exec bash

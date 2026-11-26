@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v12-error-codes
+// REVISION: privileged-socket-v16-own-screen
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v12-error-codes"
+const privilegedSocketRevision = "privileged-socket-v16-own-screen"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -230,6 +230,33 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	// /scrollback → return PTY scrollback ring buffer.
 	mux.HandleFunc("/scrollback", func(w http.ResponseWriter, r *http.Request) {
 		ps.server.handleScrollbackForPTY(w, session, entry.PTYID)
+	})
+
+	// /agents, /agents/send, /agents/messages → the outside agents this PTY's terminal is
+	// connected to by edges (Agent blocks). PTY identity from SO_PEERCRED only.
+	// REVISION: privileged-socket-v13-agent-link
+	mux.HandleFunc("/agents", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleAgentsForPTY(w, r, session, entry.PTYID, "")
+	})
+	mux.HandleFunc("/agents/", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleAgentsForPTY(w, r, session, entry.PTYID, strings.TrimPrefix(r.URL.Path, "/agents/"))
+	})
+
+	// /links → the terminals this PTY's terminal is linked to by edges (canvas links),
+	// with each one's pool UID. PTY identity from SO_PEERCRED only.
+	// REVISION: privileged-socket-v14-terminal-links
+	mux.HandleFunc("/links", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleLinksForPTY(w, r, session, entry.PTYID)
+	})
+
+	// /input → type into this PTY's own terminal (a coordinator handing a prompt to the
+	// agent the user started there). Only ever the caller's own PTY. REVISION: self-input-v1
+	mux.HandleFunc("/input", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleSelfInputForPTY(w, r, session, entry.PTYID)
+	})
+	// /screen → this PTY's raw recent output, to render its current screen. REVISION: self-input-v2-own-screen
+	mux.HandleFunc("/screen", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleOwnScreenForPTY(w, r, session, entry.PTYID)
 	})
 
 	// /tools-changed → broadcast tools_changed event.

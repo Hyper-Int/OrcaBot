@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v4-disable-autostop
-const MODULE_REVISION = 'fly-provisioning-v4-disable-autostop';
+// REVISION: fly-provisioning-v6-volume-snapshot
+const MODULE_REVISION = 'fly-provisioning-v6-volume-snapshot';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -45,6 +45,14 @@ export interface FlyGuestConfig {
   cpus: number;
   memory_mb: number;
 }
+
+/**
+ * The size of every dashboard and warm-pool VM. Performance CPUs: on shared CPUs a
+ * dashboard's boot (Chromium, several agents, installs) used up the burst allowance and
+ * Fly throttled the VM to its baseline (most CPU time went to steal), so everything in
+ * it crawled. The warm pool retires machines of another size (staleWarmMachines).
+ */
+export const SANDBOX_GUEST: FlyGuestConfig = { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 };
 
 export interface FlyServicePort {
   port: number;
@@ -174,6 +182,24 @@ export class FlyMachinesClient {
     if (!res.ok) {
       const body = await res.text().catch(() => '(no body)');
       throw new FlyApiError(`Failed to delete volume: ${res.status}`, res.status, body);
+    }
+  }
+
+  /**
+   * Snapshot a volume now (Fly keeps it for the volume's snapshot retention, even
+   * after the volume is deleted). Taken before a dashboard's VM is given up, so its
+   * workspace can be restored if the reaper deletes the volume.
+   */
+  async createVolumeSnapshot(volumeId: string): Promise<void> {
+    const url = `${this.baseUrl}/v1/apps/${this.appName}/volumes/${volumeId}/snapshots`;
+    const res = await this.request('POST', url, undefined, 10_000);
+
+    if (res.status === 404) {
+      throw new FlyVolumeNotFoundError(volumeId);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '(no body)');
+      throw new FlyApiError(`Failed to snapshot volume: ${res.status}`, res.status, body);
     }
   }
 
@@ -388,11 +414,7 @@ export class FlyMachinesClient {
       region: opts.region,
       config: {
         image: opts.image,
-        guest: {
-          cpu_kind: 'shared',
-          cpus: 2,
-          memory_mb: 4096,
-        },
+        guest: { ...SANDBOX_GUEST },
         env: {
           PORT: '8080',
           ...opts.env,

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: analytics-v3-exclude-admins
-const analyticsRevision = "analytics-v3-exclude-admins";
+// REVISION: analytics-v4-antigravity
+const analyticsRevision = "analytics-v4-antigravity";
 console.log(`[analytics] REVISION: ${analyticsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
@@ -44,6 +44,7 @@ export function detectAgentType(bootCommand: string): string | null {
   switch (firstWord) {
     case 'claude': return 'claude';
     case 'gemini': return 'gemini';
+    case 'agy': return 'antigravity';
     case 'codex': return 'codex';
     case 'opencode': return 'opencode';
     case 'droid': return 'droid';

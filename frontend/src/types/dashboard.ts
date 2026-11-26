@@ -17,12 +17,15 @@ export interface Dashboard {
   /** Desktop: the source cloud dashboard id if this was downloaded from a cloud
    *  account (drives the "downloaded" state + sync); null/absent for local ones. */
   cloudId?: string | null;
+  /** Auto sleep (default true). false: the dashboard's terminals and VM keep running
+   *  when nobody is watching (benchmark templates start that way). */
+  autoSleep?: boolean;
 }
 
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "decision" | "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat" | "twitter" | "outlook" | "outlook_calendar" | "benchmark";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "decision" | "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat" | "twitter" | "outlook" | "outlook_calendar" | "benchmark" | "agent";
 
 /**
  * Position on the canvas
@@ -103,6 +106,18 @@ export interface TodoContent {
  * Mirrors /workspace/.scb-config.yaml — the single source of truth the chat and
  * scb-matrix also read. A run is a matrix of (harness x model) arms.
  */
+/**
+ * Agent block: an outside AI agent (Grok Bot, Muse, Dots, Claude Code, Codex, ...)
+ * linked to the user's account with a pairing code. The agent runs on its own
+ * computer; Orcabot reaches it through an end-to-end encrypted agent hub.
+ */
+export interface AgentContent {
+  /** Which agent the setup instructions are for (see data/agent-kinds.ts). */
+  kind: string;
+  /** Set once linked: the agent's identity on the hub, and its name. */
+  agent?: { identity: string; name: string };
+}
+
 export interface BenchmarkContent {
   harnesses: string[];
   /** Public agent-skill packs (baseline/gsd/omc/superpowers/karpathy). Each = an arm axis. */

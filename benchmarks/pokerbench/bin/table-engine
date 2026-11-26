@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# Copyright 2026 Rob Macrae. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-Proprietary
+
+# REVISION: pokerbench-table-engine-v17-relay
+# Runs one PokerBench table from the settings at the top of the engine terminal's
+# boot command (see bin/build-template). The boot command installs PokerBench into
+# $PRIV and then runs this script with those settings in the environment. With
+# START=manual they are the defaults: the table page changes the game settings
+# (FORMAT through TURN_TIMEOUT) and chooses what plays each seat until Start.
+#
+#   FORMAT       tournament | cash
+#   BETTING      no-limit (default) | limit (fixed-limit hold'em; a separate rating)
+#   HANDS        tournament: hand limit; cash: deals (each replayed once per seat)
+#   LEVEL_HANDS  tournament: hands per blind level
+#   CONDITION    neutral | pressure | ambiguous | permitted | prohibited | fair
+#   HONEYPOTS    off | hidden | obvious
+#   SERIES       1 (default): one game. N > 1 (cash only): N games in a row, see below
+#   SEED         random (default): a new seed each game, shown in Settings and the report;
+#                or a number, to replay the same deals
+#   TURN_TIMEOUT
+#   RESUME       auto (default): if this terminal restarts during a game (it was closed, the
+#                sandbox stopped it, ...), the game carries on where it was: the hand in
+#                progress is dealt again once the players are back (up to REJOIN_GRACE
+#                seconds). off: a restart always starts a new game. End game on the table
+#                page finishes a game for good.
+#   START        manual: the table is a lobby; seats check in when they're ready and the
+#                game starts when someone presses Start on the table page, with whoever
+#                is there. auto: it starts once every seat has checked in.
+#   SEATS        optional: seats that aren't linked (a sandbox that can't report links, or
+#                outside Orcabot). Normally empty: the players are the terminals and
+#                Agent blocks linked to this engine terminal (pokerbench host).
+#   RELAY_TARGET optional: https://<upload host>/tables/<name>. A public copy of the table,
+#                RELAY_DELAY seconds (default 120) behind, for the relay Worker (relay-worker/;
+#                README "Live page"). Needs the POKERBENCH_RELAY_KEY secret.
+#   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV (in PUB: model
+#   seats run the API player from it)
+#
+# Seats find the engine through $PUB/engine.env and their seat through $PUB/seats.json,
+# and run $PUB/seat.sh (bin/seat).
+set -u
+START="${START:-manual}"
+RESUME="${RESUME:-auto}"
+REJOIN_GRACE="${REJOIN_GRACE:-240}"
+REVISION=pokerbench-table-engine-v17-relay
+echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
+PB="$VENV/bin/pokerbench"
+SRC="$PRIV/src/benchmarks/pokerbench"
+
+die() { echo "Config error: $*"; echo "Edit the settings at the top of this terminal's boot command and restart it."; exit 1; }
+case "$FORMAT" in tournament|cash) ;; *) die "FORMAT must be tournament or cash (got '$FORMAT')";; esac
+BETTING="${BETTING:-no-limit}"
+case "$BETTING" in no-limit|limit) ;; *) die "BETTING must be no-limit or limit (got '$BETTING')";; esac
+case "$HONEYPOTS" in off|hidden|obvious) ;; *) die "HONEYPOTS must be off, hidden or obvious";; esac
+case "$START" in manual|auto) ;; *) die "START must be manual or auto (got '$START')";; esac
+case "$RESUME" in auto|off) ;; *) die "RESUME must be auto or off (got '$RESUME')";; esac
+# A new seed each game unless one is set (every game used to deal from seed 0).
+# REVISION: pokerbench-table-engine-v16-limit
+case "${SEED:-random}" in
+  random|"") SEED=$(python3 -c 'import secrets; print(secrets.randbelow(2**31))') ;;
+  *[!0-9]*) die "SEED must be random or a number (got '$SEED')" ;;
+esac
+
+read -r -a STATIC <<<"${SEATS:-}"
+for s in ${STATIC[@]+"${STATIC[@]}"}; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
+[ "$START" = manual ] || [ "${#STATIC[@]}" -ge 2 ] || die "START=auto needs SEATS (2 to 10 names)"
+join() { local IFS="$1"; shift; echo "$*"; }
+
+# Publish what seats run and read (read-only to them): the poker client, the seat script,
+# the prompt (rendered again at the start for the players and condition chosen then).
+mkdir -p "$PUB/bin" && chmod 755 "$PUB" "$PUB/bin"
+cp "$SRC/pokerbench/cli.py" "$PUB/poker_cli.py"
+printf '#!/bin/sh\nexec python3 %s/poker_cli.py "$@"\n' "$PUB" > "$PUB/bin/poker"
+cp "$SRC/bin/seat" "$PUB/seat.sh"
+cp "$SRC/pokerbench/screen.py" "$PUB/seat_screen.py"
+cp "$SRC/pokerbench/agentlogs.py" "$PUB/seat_agentlogs.py"
+"$PB" prompt --condition "$CONDITION" --players 2 --format "$FORMAT" --betting "$BETTING" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
+chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/seat_screen.py" "$PUB/seat_agentlogs.py" "$PUB/prompt.txt"
+# ---- one game, or a series: SERIES consecutive cash games with the same seed, game k ----
+# dealing every hand with the seats rotated by k (no replays at the table), so each player
+# plays every deal from every seat once, never seeing a deal twice. Game 1 starts when
+# someone presses Start (with its Settings); every later game uses game 1's settings, seed
+# and seat order, and starts by itself once all its seats are back (each with a fresh
+# agent). REVISION: pokerbench-table-engine-v16-limit
+SERIES="${SERIES:-1}"
+case "$SERIES" in ''|*[!0-9]*|0) die "SERIES must be a number of games (1: a single game)";; esac
+STATE="$PRIV/series.json"
+SERIES_ID=; NEXT=0; SEAT_ORDER=
+state() { python3 - "$STATE" "$@" <<'PY'
+import json, sys
+path, op = sys.argv[1], sys.argv[2]
+try:
+    st = json.load(open(path))
+except (OSError, ValueError):
+    st = {}
+if op == "get":  # shell assignments for an unfinished series
+    if st and st.get("next", 0) < st.get("games", 0):
+        import shlex
+        for k in ("id", "games", "next", "seed", "deals", "condition", "honeypots", "turn_timeout", "seat_order",
+                  "betting"):
+            if k in st:
+                print(f"S_{k.upper()}={shlex.quote(str(st[k]))}")
+elif op == "set":  # key=value ...
+    for kv in sys.argv[3:]:
+        k, _, v = kv.partition("=")
+        st[k] = int(v) if v.isdigit() else v
+    json.dump(st, open(path, "w"), indent=1)
+elif op == "from-run":  # game 1's settings, as played
+    run = json.load(open(sys.argv[3]))
+    c = run["config"]
+    st.update(seed=c["seed"], deals=c["deals"], condition=c["condition"], honeypots=c["honeypots"],
+              turn_timeout=c["turn_timeout"], seat_order=",".join(c["seats"]),
+              betting=c.get("betting", "no-limit"))
+    json.dump(st, open(path, "w"), indent=1)
+    print(run.get("finish_reason") or "")
+PY
+}
+if [ "$SERIES" -gt 1 ]; then
+  [ "$FORMAT" = cash ] || die "SERIES needs FORMAT=cash (a tournament's stacks carry over: it can't be replayed seat by seat)"
+  S_ID=; [ "$RESUME" = auto ] && eval "$(state get)"
+  if [ -n "${S_ID:-}" ] && [ "${S_GAMES:-0}" = "$SERIES" ]; then
+    SERIES_ID=$S_ID; NEXT=$S_NEXT; SEED=$S_SEED
+    if [ -n "${S_SEAT_ORDER:-}" ]; then
+      HANDS=$S_DEALS; CONDITION=$S_CONDITION; HONEYPOTS=$S_HONEYPOTS; TURN_TIMEOUT=$S_TURN_TIMEOUT; SEAT_ORDER=$S_SEAT_ORDER
+      BETTING=${S_BETTING:-$BETTING}
+    fi
+    echo "== Carrying on series $SERIES_ID: game $((NEXT + 1)) of $SERIES"
+  else
+    SERIES_ID="series-$(date -u +%Y%m%d-%H%M%S)"
+    rm -f "$STATE"; state set id="$SERIES_ID" games="$SERIES" next=0 seed="$SEED"
+    echo "== Series $SERIES_ID: $SERIES cash games, seed $SEED, seats rotated one place per game"
+  fi
+fi
+
+run_game() {  # k: the series game (0 for a single game); first: 1 to carry on a stopped game
+  local k=$1 first=$2
+  # A game this terminal was running when it stopped carries on (RESUME=auto).
+  GAME=; [ "$first" = 1 ] && [ "$RESUME" = auto ] && GAME=$("$PB" resumable --runs "$PRIV/runs" 2>/dev/null)
+  RESUMING=${GAME:+1}
+  [ -n "$GAME" ] || GAME="$(date -u +%Y%m%d-%H%M%S)"
+  RUN="$PRIV/runs/$GAME"
+  rm -rf "$PRIV/tokens" "$PRIV/control.token" "$PUB/seats.json" "$PUB/engine.env"  # the host writes them
+
+  # Results: the engine's own directory, plus seats/ where seats may drop their own logs
+  # (model seats copy their call logs there once the game is over). Sticky, so a seat
+  # can't replace another's file.
+  OUT="/workspace/pokerbench-results/$GAME"
+  mkdir -p "$OUT/seats" && chmod 755 "$OUT" && chmod 1777 "$OUT/seats"
+  # Earlier games that finished but never reached the results (the engine used to publish
+  # only once every seat had seen the end, and this terminal restarting first lost it).
+  for run in "$PRIV"/runs/*/; do
+    g=$(basename "$run"); [ "$g" = "$GAME" ] && continue
+    if [ -f "$run/report.md" ] && [ ! -f "/workspace/pokerbench-results/$g/report.md" ]; then
+      mkdir -p "/workspace/pokerbench-results/$g" && cp -R "$run". "/workspace/pokerbench-results/$g/" \
+        && chmod -R a+rX "/workspace/pokerbench-results/$g" && echo "== Published the results of earlier game $g"
+    fi
+  done
+
+  ARGS=(--seats "$(join , ${STATIC[@]+"${STATIC[@]}"})" --format "$FORMAT" --betting "$BETTING"
+        --condition "$CONDITION" --honeypots "$HONEYPOTS" --seed "$SEED" --turn-timeout "$TURN_TIMEOUT"
+        --port "$PORT" --run-dir "$RUN" --tokens-dir "$PRIV/tokens" --exit-when-done --publish-dir "$OUT"
+        --start "$START" --control-token-file "$PRIV/control.token"
+        --resume --rejoin-grace "$REJOIN_GRACE")
+  if [ "$FORMAT" = tournament ]; then ARGS+=(--hands "$HANDS" --level-hands "$LEVEL_HANDS"); else ARGS+=(--deals "$HANDS"); fi
+  local autostart=
+  if [ -n "$SERIES_ID" ]; then
+    ARGS+=(--no-duplicate --series "$SERIES_ID" --series-game "$k" --series-games "$SERIES" --rotation "$k")
+    [ -n "$SEAT_ORDER" ] && { ARGS+=(--seat-order "$SEAT_ORDER"); autostart=$SEAT_ORDER; }
+  fi
+
+  if [ -n "$RESUMING" ]; then
+    echo "== PokerBench: carrying on game $GAME, which was still running when this terminal stopped."
+    echo "   The players get up to ${REJOIN_GRACE}s to come back, then the hand in progress is dealt again."
+    echo "   (End game on the table page finishes it; RESUME=off in the settings above always starts anew.)"
+  elif [ -n "$autostart" ]; then
+    echo "== Series $SERIES_ID, game $((k + 1)) of $SERIES: $HANDS deals, seed $SEED, seats rotated by $k."
+    echo "   It starts by itself once every seat is back: $autostart"
+  elif [ "$START" = manual ]; then
+    echo "== PokerBench table. Defaults: $BETTING $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS"
+    echo "   (change them with Settings on the table page before you press Start)"
+    [ -n "$SERIES_ID" ] && echo "   This starts series $SERIES_ID: game 1 of $SERIES. Later games reuse its settings."
+  else
+    echo "== PokerBench: $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS =="
+  fi
+  "$PB" serve "${ARGS[@]}" &
+  ENGINE=$!
+  until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
+    kill -0 $ENGINE 2>/dev/null || { echo "The engine exited before it was ready."; exit 1; }
+    sleep 1
+  done
+
+  echo
+  echo "Players: every terminal and Agent block linked to this engine terminal takes a seat."
+  echo "Open the table (the browser block, http://localhost:$PORT/): click a seat to choose what"
+  echo "plays it, Settings to set up the game, then Start. Pause, Resume and End game are there too."
+  echo "After a game (or End game) restart this terminal for the next one. If it restarts during a"
+  echo "game, the game carries on (RESUME=auto)."
+  "$PB" host --url "http://127.0.0.1:$PORT" --control-token-file "$PRIV/control.token" --pub "$PUB" \
+    --tokens-dir "$PRIV/tokens" --run-dir "$RUN" --game "$GAME" --pb "$PB" --seats "${SEATS:-}" --engine-pid $ENGINE \
+    ${autostart:+--autostart "$autostart"} &
+  HOST=$!
+
+  wait $ENGINE
+  kill $HOST 2>/dev/null; wait $HOST 2>/dev/null
+  cp -R "$RUN"/. "$OUT"/ && chmod -R a+rX "$OUT"
+  echo; cat "$OUT/report.md" 2>/dev/null
+  echo "Results: $OUT"
+}
+
+# The public copy runs for as long as this terminal does, across every game of a series
+# (between games it has nothing new to send). REVISION: pokerbench-table-engine-v17-relay
+if [ -n "${RELAY_TARGET:-}" ]; then
+  "$PB" relay --engine "http://127.0.0.1:$PORT" --target "$RELAY_TARGET" --delay "${RELAY_DELAY:-120}" &
+  RELAY=$!
+  trap 'kill $RELAY 2>/dev/null' EXIT
+  echo "== Public table: $RELAY_TARGET, ${RELAY_DELAY:-120}s behind"
+fi
+
+k=$NEXT; first=1
+while :; do
+  run_game "$k" "$first"; first=0
+  [ -n "$SERIES_ID" ] || break
+  reason=$(state from-run "$RUN/run.json" 2>/dev/null)
+  eval "$(state get)"  # game 1's settings, as played, for the rest of the series
+  if [ -z "$SEAT_ORDER" ] && [ -n "${S_SEAT_ORDER:-}" ]; then
+    HANDS=$S_DEALS; CONDITION=$S_CONDITION; HONEYPOTS=$S_HONEYPOTS; TURN_TIMEOUT=$S_TURN_TIMEOUT
+    SEED=$S_SEED; SEAT_ORDER=$S_SEAT_ORDER; BETTING=${S_BETTING:-$BETTING}
+  fi
+  k=$((k + 1)); state set next="$k"
+  if [ "$reason" = ended ]; then echo "== Series $SERIES_ID stopped: game $k was ended from the table page."; break; fi
+  if [ "$k" -ge "$SERIES" ]; then echo "== Series $SERIES_ID complete: $SERIES games."; break; fi
+  echo; echo "== Series $SERIES_ID: game $((k + 1)) of $SERIES next (every seat gets a fresh agent)."
+  sleep 5
+done

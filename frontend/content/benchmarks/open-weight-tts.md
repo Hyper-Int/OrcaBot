@@ -7,7 +7,7 @@ ogImage: /benchmarks/og-open-weight-tts.png
 toc: false
 ---
 
-We tested all the open weight TTS models against the same corpus, using Whisper medium to transcribe back to text.
+We tested all the open weight TTS models against the same corpus, using Whisper (`base.en`) to transcribe back to text.
 
 Every row can be played, so you can hear what a word error rate actually sounds like.
 

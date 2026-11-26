@@ -249,6 +249,104 @@ describe('Session Handlers', () => {
       expect(ptysStarted()).toBe(0);
     });
 
+    // REVISION: session-tests-v7-recover-on-same-vm
+    // 2026-11-21: a VM's sandbox server restarted (image update) and lost its session;
+    // the 404 moved the dashboard to a fresh VM, and the reaper deleted the old
+    // workspace volume (agent logins, results) 15 minutes later.
+    describe('when the VM lost its session', () => {
+      const FLY = 'https://api.machines.dev/v1/apps/orcabot-test';
+      let flyCalls: string[];
+
+      const flyEnv = () => {
+        ctx.env.FLY_PROVISIONING_ENABLED = 'true';
+        ctx.env.FLY_API_TOKEN = 'fly-test-token';
+        ctx.env.FLY_APP_NAME = 'orcabot-test';
+        ctx.env.FLY_MACHINE_IMAGE = 'registry.fly.io/orcabot-test:deployment-1';
+      };
+      const seedVm = async (dashboardId: string, sessionId: string, machineId: string, volumeId: string) => {
+        await ctx.db.prepare(`
+          INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, applied_secret_names, created_at)
+          VALUES (?, ?, ?, ?, 'started', '[]', ?)
+        `).bind(dashboardId, sessionId, machineId, volumeId, new Date().toISOString()).run();
+      };
+      const vmRow = (dashboardId: string) => ctx.db.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id, fly_volume_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string; fly_volume_id: string }>();
+
+      beforeEach(() => {
+        flyCalls = [];
+        flyEnv();
+        mockSandbox.server.use(
+          http.all(`${FLY}/*`, ({ request }) => {
+            const path = new URL(request.url).pathname.replace('/v1/apps/orcabot-test', '');
+            flyCalls.push(`${request.method} ${path}`);
+            const machine = path.match(/^\/machines\/([^/]+)$/);
+            if (request.method === 'GET' && machine) {
+              return machine[1].startsWith('gone-')
+                ? HttpResponse.json({ error: 'not found' }, { status: 404 })
+                : HttpResponse.json({ id: machine[1], state: 'started', region: 'sjc' });
+            }
+            if (request.method === 'POST' && /^\/volumes\/[^/]+\/snapshots$/.test(path)) {
+              return HttpResponse.json({});
+            }
+            // Provisioning a new VM: refuse, so a test that gets here fails loudly.
+            return HttpResponse.json({ error: 'not in this test' }, { status: 500 });
+          }),
+        );
+      });
+
+      it('starts a new session on the same VM, keeping its workspace volume', async () => {
+        const dashboard = await seedDashboard(ctx.db, testUser.id);
+        const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+        // Not known to the mock sandbox: the VM answers, but 404s the session.
+        await seedVm(dashboard.id, 'lost-session', 'vm-restarted-1', 'vol-workspace-1');
+
+        const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
+        expect(response.status).toBe(201);
+        const data = await response.json() as Record<string, any>;
+        const row = await vmRow(dashboard.id);
+        expect(row?.sandbox_machine_id).toBe('vm-restarted-1');
+        expect(row?.fly_volume_id).toBe('vol-workspace-1');
+        expect(row?.sandbox_session_id).not.toBe('lost-session');
+        expect(data.session.sandboxSessionId).toBe(row?.sandbox_session_id);
+        expect(data.session.sandboxMachineId).toBe('vm-restarted-1');
+        // No new VM, no new volume, nothing to snapshot.
+        expect(flyCalls.filter((c) => !c.startsWith('GET /machines/'))).toEqual([]);
+      });
+
+      it('recovers once when every terminal opens at the same time', async () => {
+        const dashboard = await seedDashboard(ctx.db, testUser.id);
+        const items = await Promise.all([1, 2, 3].map(() => seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' })));
+        await seedVm(dashboard.id, 'lost-session', 'vm-restarted-2', 'vol-workspace-2');
+        const before = new Set(mockSandbox.sessions.keys());
+
+        const responses = await Promise.all(items.map((item) =>
+          createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name)));
+        const ids = await Promise.all(responses.map(async (r) => {
+          expect(r.status).toBe(201);
+          return ((await r.json()) as Record<string, any>).session.sandboxSessionId as string;
+        }));
+        const row = await vmRow(dashboard.id);
+        expect(new Set(ids)).toEqual(new Set([row?.sandbox_session_id]));
+        expect(row?.fly_volume_id).toBe('vol-workspace-2');
+        // The losing sessions were deleted again.
+        expect([...mockSandbox.sessions.keys()].filter((k) => !before.has(k))).toEqual([row?.sandbox_session_id]);
+      });
+
+      it('snapshots the workspace volume before giving a VM up', async () => {
+        const dashboard = await seedDashboard(ctx.db, testUser.id);
+        const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+        // Fly no longer knows the machine: the dashboard must move to a new VM.
+        await seedVm(dashboard.id, 'lost-session', 'gone-vm-3', 'vol-workspace-3');
+
+        await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
+        const snapshot = flyCalls.indexOf('POST /volumes/vol-workspace-3/snapshots');
+        expect(snapshot).toBeGreaterThanOrEqual(0);
+        // Taken before anything is provisioned for the new VM.
+        expect(flyCalls.slice(0, snapshot).filter((c) => c.startsWith('POST'))).toEqual([]);
+      });
+    });
+
     it('should seed and query sessions', async () => {
       const dashboard = await seedDashboard(ctx.db, testUser.id);
       const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });

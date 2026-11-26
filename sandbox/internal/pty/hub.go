@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v6-run-cleanup-all-paths
+// REVISION: hub-v9-process-group
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const hubRevision = "hub-v6-run-cleanup-all-paths"
+const hubRevision = "hub-v9-process-group"
 
 func init() {
 	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
@@ -102,8 +102,13 @@ type ToolsChangedEvent struct {
 }
 
 // IdleTimeout is how long a hub stays alive with no connected clients.
-// After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
+// After this duration with zero clients, the hub automatically stops to prevent goroutine leaks,
+// unless its dashboard has Auto sleep turned off (keepAwake reports true): then the
+// timer is re-armed and the terminal keeps running with nobody watching.
 const IdleTimeout = 600 * time.Second
+
+// idleTimeout is the timeout hubs use; tests shorten it.
+var idleTimeout = IdleTimeout
 
 // Hub manages multiple clients connected to a single PTY
 type Hub struct {
@@ -128,9 +133,20 @@ type Hub struct {
 	// Idle timeout: stops hub if no clients for IdleTimeout duration
 	idleTimer *time.Timer
 	idleChan  chan struct{}
+	// keepAwake, when set and true at the moment the idle timer fires, keeps the PTY
+	// running (the dashboard's Auto sleep is off). Checked at fire time, so turning
+	// Auto sleep back on takes effect at the next expiry.
+	// REVISION: hub-v7-auto-sleep-off
+	keepAwake func() bool
 
 	// onStop callbacks invoked when hub stops (for cleanup by owner)
 	onStop []func()
+
+	// Output watchers see the output as clients do (after redaction), e.g. the
+	// Gemini untrusted-flags auto-approver. They must not block.
+	// REVISION: hub-v8-output-watchers
+	watchersMu     sync.RWMutex
+	outputWatchers []func([]byte)
 
 	suppressMu      sync.Mutex
 	suppressActive  bool
@@ -254,15 +270,34 @@ func (h *Hub) Run() {
 			// Start idle timer when last client disconnects
 			clientCount := len(h.clients)
 			if clientCount == 0 && h.idleTimer == nil {
-				h.idleTimer = time.AfterFunc(IdleTimeout, func() {
-					close(h.idleChan)
-				})
-				log.Printf("Hub: no clients, starting %v idle timeout", IdleTimeout)
+				h.armIdleTimerLocked()
+				log.Printf("Hub: no clients, starting %v idle timeout", idleTimeout)
 			}
 			h.mu.Unlock()
 
 		case <-h.idleChan:
-			// Idle timeout expired with no clients - stop to prevent goroutine leak
+			// Idle timeout expired with no clients. With Auto sleep off the terminal
+			// keeps running (re-arm and check again later); otherwise stop it to
+			// prevent a goroutine leak.
+			h.mu.Lock()
+			if len(h.clients) > 0 {
+				// A client connected as the timer fired (register stopped a timer that
+				// had already closed the channel): not idle after all.
+				h.idleChan = make(chan struct{})
+				h.idleTimer = nil
+				h.mu.Unlock()
+				continue
+			}
+			keep := h.keepAwake != nil && h.keepAwake()
+			if keep {
+				h.idleChan = make(chan struct{})
+				h.armIdleTimerLocked()
+			}
+			h.mu.Unlock()
+			if keep {
+				log.Printf("Hub: idle timeout expired, Auto sleep is off: keeping PTY running")
+				continue
+			}
 			log.Printf("Hub: idle timeout expired, stopping PTY")
 			h.Stop()
 			return
@@ -335,6 +370,12 @@ func (h *Hub) broadcast(data []byte) {
 
 	// Store in scrollback ring buffer (post-redaction)
 	h.appendScrollback(data)
+
+	h.watchersMu.RLock()
+	for _, watch := range h.outputWatchers {
+		watch(data)
+	}
+	h.watchersMu.RUnlock()
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -475,6 +516,15 @@ func (h *Hub) SetOnStop(fn func()) {
 	h.onStop = []func(){fn}
 }
 
+// AddOutputWatcher calls fn with every chunk of output, as clients see it (after
+// secret redaction). fn must return quickly and must not keep data.
+// REVISION: hub-v8-output-watchers
+func (h *Hub) AddOutputWatcher(fn func([]byte)) {
+	h.watchersMu.Lock()
+	h.outputWatchers = append(h.outputWatchers, fn)
+	h.watchersMu.Unlock()
+}
+
 // AddOnStop appends an additional callback invoked when the hub stops.
 // Use this to register secondary callbacks (e.g., execution completion notifications).
 func (h *Hub) AddOnStop(fn func()) {
@@ -495,6 +545,15 @@ func (h *Hub) IsProcessAlive() bool {
 	default:
 		return true
 	}
+}
+
+// ProcessGroup is the process group of a running PTY (0 if it has stopped): the
+// processes a restart of this terminal kills. REVISION: hub-v9-process-group
+func (h *Hub) ProcessGroup() int {
+	if !h.IsProcessAlive() {
+		return 0
+	}
+	return h.pty.ProcessGroup()
 }
 
 // ClientCount returns the number of connected clients
@@ -578,6 +637,13 @@ func (h *Hub) WriteSystem(data []byte) (int, error) {
 	return h.pty.Write(data)
 }
 
+
+// Size is the PTY window size last set (0, 0 if never resized). REVISION: self-input-v2-own-screen
+func (h *Hub) Size() (cols, rows uint16) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.lastCols, h.lastRows
+}
 
 // Resize changes the PTY window size and records the dimensions for replay.
 func (h *Hub) Resize(cols, rows uint16) error {
@@ -851,6 +917,24 @@ func (h *Hub) broadcastControl(data []byte) {
 		default:
 		}
 	}
+}
+
+// armIdleTimerLocked starts the idle timer on the current idleChan. The timer closes
+// the channel it was armed with, never a later one. Caller holds h.mu.
+func (h *Hub) armIdleTimerLocked() {
+	ch := h.idleChan
+	h.idleTimer = time.AfterFunc(idleTimeout, func() {
+		close(ch)
+	})
+}
+
+// SetKeepAwake sets the check the idle timer makes before stopping a PTY nobody is
+// watching: when it returns true (the dashboard's Auto sleep is off) the PTY keeps running.
+// REVISION: hub-v7-auto-sleep-off
+func (h *Hub) SetKeepAwake(fn func() bool) {
+	h.mu.Lock()
+	h.keepAwake = fn
+	h.mu.Unlock()
 }
 
 // SetWorkspaceRoot sets the workspace root path used to compute relative cwd paths.

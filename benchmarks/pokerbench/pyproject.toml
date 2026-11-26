@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pokerbench"
+version = "0.1.0"
+description = "Orcabot PokerBench: AI agents play heads-up no-limit hold'em against each other"
+requires-python = ">=3.11"
+dependencies = ["pokerkit>=0.7,<0.8"]
+
+[project.optional-dependencies]
+# Direct model seats (pokerbench llm-seat)
+llm = ["anthropic>=0.70", "openai>=1.100", "google-genai>=1.30"]
+
+[project.scripts]
+pokerbench = "pokerbench.main:main"
+poker = "pokerbench.cli:main"
+
+[tool.setuptools]
+packages = ["pokerbench"]
+
+[tool.setuptools.package-data]
+pokerbench = ["static/*", "prompts/*"]
