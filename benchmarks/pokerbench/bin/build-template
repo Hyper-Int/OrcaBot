@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v27-limit
+# REVISION: pokerbench-template-v28-relay
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -82,6 +82,8 @@ TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute o
 START=manual          # manual: press Start on the table page | auto: when every seat is ready
 RESUME=auto           # auto: if this terminal restarts mid-game, the game carries on | off: always a new game
 REF=main              # branch or tag of {REPO} to install
+RELAY_TARGET=         # optional: https://<relay upload host>/tables/<name>, a public live table (README "Live page")
+RELAY_DELAY=120       # seconds the public table runs behind the game
 # ======================================================================================
 """
 
@@ -103,7 +105,7 @@ if [ ! -x "$VENV/bin/pokerbench" ] || {{ [ -n "$HEAD" ] && [ "$(cat "$PRIV/ref" 
     && echo "$REF@$HEAD" > "$PRIV/ref" \\
     || {{ echo "PokerBench install failed."; exec bash; }}
 fi
-export FORMAT BETTING HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED SERIES TURN_TIMEOUT START RESUME PORT PRIV PUB VENV
+export FORMAT BETTING HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED SERIES TURN_TIMEOUT START RESUME PORT PRIV PUB VENV RELAY_TARGET RELAY_DELAY
 export SEATS="${{SEATS:-}}"  # optional: seats that aren't linked (see bin/table-engine)
 bash "$PRIV/src/benchmarks/pokerbench/bin/table-engine"
 exec bash
