@@ -498,7 +498,7 @@ Reference bots (`--strategy`): `call` (calling station), `random`, and `tight`
 
 ## Live page
 
-<!-- REVISION: pokerbench-relay-v5-game-boundary -->
+<!-- REVISION: pokerbench-relay-worker-v3-upload-host -->
 A read-only copy of the table for people outside Orcabot (a blog post's iframe), running
 `RELAY_DELAY` seconds behind the game: [`relay.py`](pokerbench/relay.py) in the engine
 terminal reads `/api/spectate` (no live hole cards), keeps only what the table page draws
@@ -527,10 +527,10 @@ So the page only ever shows what the seats have already seen:
   leaves nothing to record.
 
 **Set up** (once):
-1. Pick a random upload key. In `relay-worker/wrangler.toml` set `UPLOAD_HOST` to the
-   Worker's workers.dev host (`PUBLIC_HOST` is `pokerbench.orcabot.com`, its custom domain;
-   the page is embedded in orcabot.com/benchmarks/pokerbench by
-   `frontend/src/components/charts/PokerBenchLive.tsx`), then
+1. Pick a random upload key. In `relay-worker/wrangler.toml` `UPLOAD_HOST` is
+   `pokerbench-upload.orcabot.com` and `PUBLIC_HOST` `pokerbench.orcabot.com`, both custom domains (the public
+   page is embedded in orcabot.com/benchmarks/pokerbench by
+   `frontend/src/components/charts/PokerBenchLive.tsx`); deploying creates both. Then
    `wrangler secret put RELAY_KEY -c benchmarks/pokerbench/relay-worker/wrangler.toml`
    and `wrangler deploy -c benchmarks/pokerbench/relay-worker/wrangler.toml`.
 2. In Orcabot, add the same key as the secret `POKERBENCH_RELAY_KEY` (broker-protected).
@@ -538,7 +538,7 @@ So the page only ever shows what the seats have already seen:
    for the upload host once you approve that host for the engine terminal (the first
    upload asks: header `Authorization`, format `Bearer %s`). Deny any request for it from a
    seat terminal.
-3. In the engine terminal's settings: `RELAY_TARGET=https://pokerbench-relay.orcabot.workers.dev/tables/pokerbench`
+3. In the engine terminal's settings: `RELAY_TARGET=https://pokerbench-upload.orcabot.com/tables/pokerbench`
    (and `RELAY_DELAY`, default 120), then restart it between series. The table is
    `https://pokerbench.orcabot.com/tables/pokerbench`, the name the benchmark page embeds.
 
