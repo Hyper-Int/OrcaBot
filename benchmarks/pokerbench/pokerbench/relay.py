@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v5-game-boundary
+# REVISION: pokerbench-relay-v6-user-agent
 """A delayed public copy of the table, for watching a game from outside Orcabot.
 
 Every ``interval`` seconds the relay reads the engine's spectator view (/api/spectate:
@@ -38,7 +38,7 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 
-RELAY_REVISION = "pokerbench-relay-v5-game-boundary"
+RELAY_REVISION = "pokerbench-relay-v6-user-agent"
 
 # What the table page draws; anything else in /api/spectate stays on the VM (seat kinds
 # and models beyond the label, seat status messages, uids). A whitelist: a field added to
@@ -182,8 +182,10 @@ def run(engine: str, target: str, broker: str, delay: float, interval: float = 2
                 if len(body) > MAX_BODY:
                     log(f"[relay] snapshot of {len(body)} bytes is over {MAX_BODY}: not sent")
                 else:
-                    req = urllib.request.Request(url, data=body, method="PUT",
-                                                 headers={"Content-Type": "application/json"})
+                    # Its own User-Agent: Cloudflare refuses Python's default one (error 1010)
+                    # before the Worker sees it. REVISION: pokerbench-relay-v6-user-agent
+                    req = urllib.request.Request(url, data=body, method="PUT", headers={
+                        "Content-Type": "application/json", "User-Agent": f"pokerbench-relay/{RELAY_REVISION}"})
                     try:
                         with urllib.request.urlopen(req, timeout=10) as r:
                             r.read()

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v5-game-boundary
+# REVISION: pokerbench-relay-v6-user-agent
 """The relay: a delayed public copy of the table, uploaded through the secrets broker.
 Only what the table page draws leaves the VM, and nothing newer than the delay."""
 
@@ -111,6 +111,7 @@ class Fake(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
+        Fake.st.setdefault("agents", []).append(self.headers.get("User-Agent"))
         status = Fake.st.get("put_status", 204)
         Fake.st["puts"].append((self.path, json.loads(body), status))
         self.send_response(status)
@@ -150,6 +151,8 @@ class RunTests(unittest.TestCase):
         self.assertEqual(q["target"], ["https://relay.example/tables/pb"])
         self.assertEqual(body["relay"]["delay_s"], 4)
         self.assertNotIn("players", body)
+        # Its own User-Agent (Cloudflare refuses Python's default with error 1010).
+        self.assertEqual(set(Fake.st["agents"]), {f"pokerbench-relay/{relay.RELAY_REVISION}"})
         # Round 1 read at t0 goes out at round 3 (t0+4), never sooner: the first upload is
         # the snapshot from 4s before it. Unchanged snapshots aren't sent again.
         self.assertEqual(body["relay"]["as_of"], "2027-01-15T08:00:00Z")
