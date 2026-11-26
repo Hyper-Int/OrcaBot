@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v15-agent-info-per-game
+# REVISION: pokerbench-seat-v16-no-claude-autoupdate
 """An agent seat runs as its own OS user with a private home (seat.sh agent), so agents
 can't read each other's live transcripts (hole cards, reasoning) or the engine's files:
 every Orcabot terminal is root with one shared HOME. Each start archives the seat's
@@ -32,7 +32,9 @@ class SeatUserTests(unittest.TestCase):
         (self.etc / "group").write_text("root:x:0:\n")
         self.log = t / "setpriv.log"
         # Fake setpriv: records its arguments and the HOME it would give, then exits.
-        (self.bin / "setpriv").write_text(f'#!/bin/sh\necho "$*" >> {self.log}\n')
+        self.envlog = t / "setpriv-env.log"
+        (self.bin / "setpriv").write_text(f'#!/bin/sh\necho "$*" >> {self.log}\n'
+                                          f'echo "DISABLE_AUTOUPDATER=${{DISABLE_AUTOUPDATER:-}} $*" >> {self.envlog}\n')
         (self.bin / "claude").write_text("#!/bin/sh\n")
         (self.bin / "agy").write_text("#!/bin/sh\n")
         for f in ("setpriv", "claude", "agy"):
@@ -122,6 +124,17 @@ class SeatUserTests(unittest.TestCase):
             self.launch("openai", "codex", "--no-daemon")
         got = (self.root / "seats" / "sonnet" / ".codex/config.toml").read_text()
         self.assertEqual(got, 'check_for_update_on_startup = false\nmodel = "gpt-6.2-astra"\n\n[tui]\nx = 1\n')
+
+    def test_claude_seat_never_auto_updates(self):
+        # Every seat's updater downloaded each release into its home: on 2026-11-26 the
+        # copies filled /workspace mid-game. Only Claude is told.
+        self.launch("anthropic", "claude", "--model", "sonnet")
+        self.launch("antigravity", "agy", pty="pty-2")
+        runs = self.envlog.read_text().splitlines()
+        claude = [l for l in runs if l.endswith("claude --model sonnet")]
+        agy = [l for l in runs if " agy " in f" {l} "]
+        self.assertTrue(claude and claude[0].startswith("DISABLE_AUTOUPDATER=1 "), runs)
+        self.assertTrue(agy and agy[0].startswith("DISABLE_AUTOUPDATER= "), runs)
 
     def test_the_same_agent_info_is_reported_again_in_the_next_game(self):
         # A Codex game is one turn: every game's logs read the same. Each game must get it.

@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v15-agent-info-per-game
+REVISION=pokerbench-seat-v16-no-claude-autoupdate
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -335,6 +335,11 @@ if [ "$MODE" = agent ]; then
   case "$VENDOR" in anthropic|openai|google|antigravity) ;; *)
     echo "seat.sh agent: vendor must be anthropic, openai, google or antigravity"; exec bash ;;
   esac
+  # Claude Code's auto-updater downloads each new release (~400 MB) into every seat's home
+  # on /workspace, and seats never run it (they run the image's claude). On 2026-11-26 the
+  # four Claude seats' copies (1.2 GB each) filled /workspace in game 1 of series 4 and the
+  # Gemini seats' agents crashed at their next write. REVISION: pokerbench-seat-v16-no-claude-autoupdate
+  [ "$VENDOR" = anthropic ] && export DISABLE_AUTOUPDATER=1
   if [ $# -eq 0 ] || ! command -v "$1" >/dev/null 2>&1; then
     if [ "$VENDOR" = antigravity ]; then
       echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:"

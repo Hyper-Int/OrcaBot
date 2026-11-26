@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v23-series-in-spectate
+# REVISION: pokerbench-engine-v24-agent-info-in-checkpoint
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v23-series-in-spectate"
+ENGINE_REVISION = "pokerbench-engine-v24-agent-info-in-checkpoint"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -747,6 +747,10 @@ class Match:
             "button": self.button, "hand_index": self.hand_index, "eliminated": self.eliminated,
             "counters": self.counters, "missed": self.missed, "started_at": self.started_at,
             "duplicate_default": self.duplicate_default, "resumes": self.resumes,
+            # What each seat reported it runs (model, effort). A Codex seat reports once a
+            # game, so without this a restart lost it and the game named it "unknown".
+            # REVISION: pokerbench-engine-v24-agent-info-in-checkpoint
+            "agent_info": self.agent_info,
         }
 
     def _save_checkpoint(self) -> None:
@@ -770,6 +774,7 @@ class Match:
         self.started_at = cp.get("started_at") or self.started_at
         self.duplicate_default = bool(cp.get("duplicate_default", self.duplicate_default))
         self.resumes = int(cp.get("resumes", 0)) + 1
+        self.agent_info = {s: dict(v) for s, v in (cp.get("agent_info") or {}).items() if isinstance(v, dict)}
         self.status = "running"
         # Seats bind to their OS users again as they come back (a restarted terminal is a
         # new pool user), so the old bindings aren't kept.

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-ratings-v1
+# REVISION: pokerbench-ratings-v3-agent-info-events
 """Ratings across games: entrant identity, bb/100 with duplicate deal groups,
 Bradley-Terry, Plackett-Luce, and a run over the real example result folders."""
 
@@ -82,6 +82,26 @@ class EntrantTests(unittest.TestCase):
         cfg = {"series": "s2", "series_game": 1, "series_games": 3, "rotation": 1, "seed": 9}
         self.assertEqual(R.series_info({"config": cfg})["id"], "s2")
         self.assertIsNone(R.series_info({"config": {"series": ""}}))
+
+    def test_a_seat_the_run_forgot_is_named_from_its_last_report(self):
+        # An engine restart (before pokerbench-engine-v24) lost the Codex seats' agent_info,
+        # so the game called them "... / unknown": a second Astra on the scoreboard.
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "g1"
+            d.mkdir()
+            (d / "run.json").write_text(json.dumps({
+                "config": {"seats": ["astra", "opus"], "format": "cash", "big_blind": 100}, "status": "finished",
+                "players": {"astra": {"kind": "codex", "model": "gpt-6.2-astra"}, "opus": {"kind": "claude-code"}},
+                "agent_info": {"opus": {"models": {"claude-opus-5-5": 9}, "effort": "medium"}}}))
+            (d / "events.jsonl").write_text("\n".join(json.dumps(e) for e in [
+                {"type": "agent_info", "seat": "astra", "models": {"gpt-6.2-astra": 1}, "effort": "low"},
+                {"type": "agent_info", "seat": "astra", "models": {"gpt-6.2-astra": 1}, "effort": "medium"},
+                {"type": "agent_info", "seat": "opus", "models": {"claude-opus-5-5": 1}, "effort": "high"}]) + "\n")
+            (d / "hand_results.jsonl").write_text("")
+            g = R.load_game(d)
+            # The last report for a forgotten seat; run.json's own record wins where it has one.
+            self.assertEqual(g.entrants, {"astra": "codex / gpt-6.2-astra / medium",
+                                          "opus": "claude-code / claude-opus-5-5 / medium"})
 
     def test_load_game_with_overrides_and_exclusion(self):
         with tempfile.TemporaryDirectory() as tmp:
