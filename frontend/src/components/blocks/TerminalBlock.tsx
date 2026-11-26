@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v17-antigravity
-const TERMINAL_BLOCK_REVISION = "terminal-block-v17-antigravity";
+// REVISION: terminal-block-v18-liveness-before-restart
+const TERMINAL_BLOCK_REVISION = "terminal-block-v18-liveness-before-restart";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -49,6 +49,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { listBackgroundProcesses, stopBackgroundProcesses, type BackgroundProcess } from "@/lib/api/cloudflare/background-processes";
+import { getSessionLiveness } from "@/lib/api/cloudflare/session-liveness";
 import { RestartBackgroundDialog } from "./RestartBackgroundDialog";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
@@ -2492,6 +2493,45 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, actualItemId, stopSession, markSessionStopped, upsertDashboardSession]);
 
+  // A dropped connection isn't a dead terminal. A backgrounded tab (Safari suspends its
+  // sockets and timers) loses its WebSocket while the terminal runs on, and replacing it
+  // then kills what was running (2026-11-24: a PokerBench engine terminal restarted four
+  // times, three agent terminals once each, all healthy). So the automatic paths ask the
+  // sandbox first and only replace a terminal whose process is gone; a running one they
+  // reconnect to. Nothing is decided while the tab is hidden.
+  // REVISION: terminal-block-v18-liveness-before-restart
+  const sessionIdRef = React.useRef<string | undefined>(session?.id);
+  sessionIdRef.current = session?.id;
+  const terminalActionsRef = React.useRef(terminalActions);
+  terminalActionsRef.current = terminalActions;
+  const recoverTerminal = React.useCallback(async (why: string, reconnectIfAlive: boolean) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      console.log(`[TerminalBlock] ${why}: tab hidden, deciding when it's visible again`);
+      await new Promise<void>((resolve) => {
+        const onVisible = () => {
+          if (document.visibilityState === "hidden") return;
+          document.removeEventListener("visibilitychange", onVisible);
+          resolve();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+      });
+    }
+    if (sessionIdRef.current !== sid) return;
+    const alive = await getSessionLiveness(sid);
+    if (sessionIdRef.current !== sid) return;
+    if (alive === false) {
+      console.log(`[TerminalBlock] ${why}: terminal's process is gone, starting a fresh session`);
+      terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
+      void handleReopen();
+      return;
+    }
+    // Running, or unknown (never destroy on unknown): keep the terminal.
+    console.log(`[TerminalBlock] ${why}: terminal ${alive ? "still running" : "status unknown"}, ${reconnectIfAlive ? "reconnecting" : "leaving it"} (not restarting)`);
+    if (reconnectIfAlive) terminalActionsRef.current.reconnect();
+  }, [handleReopen]);
+
   // A restart the user asked for (menu, "restart to apply", Reopen): first ask about
   // background processes the terminal started that a restart won't stop (daemons,
   // servers), if there are any. Automatic restarts (crash loop, watchdog) call
@@ -2580,10 +2620,12 @@ export function TerminalBlock({
 
   const autoReopenAttemptedRef = React.useRef(false);
   React.useEffect(() => {
-    if (isConnected) {
+    // Any new (re)connect attempt re-arms recovery, so a reconnect to a running terminal
+    // that fails again is checked again (not only after a successful connect).
+    if (isConnected || connectionState === "connecting" || connectionState === "reconnecting") {
       autoReopenAttemptedRef.current = false;
     }
-  }, [isConnected, session?.id]);
+  }, [isConnected, connectionState, session?.id]);
 
   // Fast-fail loop guard: if a freshly-restarted session dies again within a few
   // seconds (e.g. a boot command that exits immediately — bad flag, missing
@@ -2632,8 +2674,14 @@ export function TerminalBlock({
     }
 
     console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionExpired=${sessionExpired} sessionStatus=${session.status}`);
-    terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
-    void handleReopen();
+    if (ptyClosed || sessionExpired) {
+      // The sandbox said so: the process exited, or the sandbox lost the session.
+      terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
+      void handleReopen();
+      return;
+    }
+    // Only the connection was lost: replace the terminal only if its process is gone.
+    void recoverTerminal("connection lost", true);
   }, [
     session,
     isOwner,
@@ -2643,10 +2691,13 @@ export function TerminalBlock({
     sessionExpired,
     isCreatingSession,
     handleReopen,
+    recoverTerminal,
   ]);
 
   // Post-reconnect liveness watchdog: if no PTY output arrives within 8s
-  // after a WebSocket reconnection, auto-restart the session.
+  // after a WebSocket reconnection, check the terminal is still running (a quiet
+  // terminal, e.g. one waiting on a long command, prints nothing and is fine) and
+  // replace it only if its process is gone.
   // Only triggers on reconnect (reconnecting→connected), not initial connect.
   React.useEffect(() => {
     const wasReconnecting = prevConnectionStateRef.current === "reconnecting";
@@ -2674,9 +2725,8 @@ export function TerminalBlock({
     reconnectWatchdogRef.current = setTimeout(() => {
       reconnectWatchdogRef.current = null;
       if (lastPtyOutputTimeRef.current < reconnectTime) {
-        console.log(`[TerminalBlock] Watchdog: no PTY output in 8s post-reconnect, auto-restarting`);
-        terminalRef.current?.write("\x1b[33mSession unresponsive after reconnect, restarting...\x1b[0m\r\n");
-        void handleReopen();
+        console.log(`[TerminalBlock] Watchdog: no PTY output in 8s post-reconnect, checking the terminal is running`);
+        void recoverTerminal("quiet after reconnect", false);
       } else {
         console.log(`[TerminalBlock] Watchdog: PTY output received, session is alive`);
       }
@@ -2688,7 +2738,7 @@ export function TerminalBlock({
         reconnectWatchdogRef.current = null;
       }
     };
-  }, [connectionState, isOwner, session, handleReopen]);
+  }, [connectionState, isOwner, session, recoverTerminal]);
 
   React.useEffect(() => {
     if (!isConnected) {

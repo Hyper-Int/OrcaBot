@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v30-background-processes
-console.log(`[controlplane] REVISION: controlplane-v30-background-processes loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v31-session-liveness
+console.log(`[controlplane] REVISION: controlplane-v31-session-liveness loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -25,6 +25,7 @@ import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
 import { nearestFlyRegion } from './sessions/handler';
 import * as backgroundProcesses from './sessions/background-processes';
+import { getSessionLiveness } from './sessions/liveness';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
@@ -3122,6 +3123,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (segments.length === 4 && segments[3] === 'stop' && method === 'POST') {
       return backgroundProcesses.stopBackgroundProcesses(env, request, segments[1], auth.user!.id);
     }
+  }
+
+  // GET /sessions/:id/alive - Is the terminal's process still running? The page asks
+  // before replacing a terminal whose connection dropped. REVISION: controlplane-v31-session-liveness
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'alive' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return getSessionLiveness(env, segments[1], auth.user!.id);
   }
 
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
