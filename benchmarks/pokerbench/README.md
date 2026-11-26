@@ -498,7 +498,7 @@ Reference bots (`--strategy`): `call` (calling station), `random`, and `tight`
 
 ## Live page
 
-<!-- REVISION: pokerbench-relay-v1 -->
+<!-- REVISION: pokerbench-relay-v5-game-boundary -->
 A read-only copy of the table for people outside Orcabot (a blog post's iframe), running
 `RELAY_DELAY` seconds behind the game: [`relay.py`](pokerbench/relay.py) in the engine
 terminal reads `/api/spectate` (no live hole cards), keeps only what the table page draws
@@ -506,17 +506,21 @@ terminal reads `/api/spectate` (no live hole cards), keeps only what the table p
 ([`relay-worker/`](relay-worker/)), which serves the table page in public mode: no Start,
 Pause, End, Settings or player choice, nothing sent to any engine.
 
-**Why it's kept from the seats.** A series deals the same 100 deals in every game, so a
-board shown in game 1 is that deal's board in games 2–10. The seats must not be able to
-read the live page during the series:
+**Why it can't help a seat.** A series deals the same 100 deals in every game, so a board
+from game 1 is that deal's board in games 2–10. The seats *can* reach the live page: they
+run as their own users (uid 3000+), outside the sandbox's egress control (its kernel
+rules cover pool UIDs 2000–2099, and seats have no proxy settings), so denying the host on
+the dashboard does nothing for them (checked 2026-11-26: a seat user fetched it directly).
+So the page only ever shows what the seats have already seen:
+- within a game it shows that game, `RELAY_DELAY` behind: boards and showdown cards every
+  seat at the table saw then;
+- when a new game starts, the relay drops every snapshot it still holds from the last one
+  and shows "next game starting" (no cards) until the new game's are `RELAY_DELAY` old, so
+  a board from another game of the series is never on the page during play;
 - the Worker answers on two hosts: `UPLOAD_HOST` takes uploads only (and serves no
-  table), `PUBLIC_HOST` serves the table only. Deny `PUBLIC_HOST` on the PokerBench
-  dashboard (egress **Deny Always**) so the egress proxy refuses it. Check it from a seat
-  terminal before relying on it (`curl -sI https://<PUBLIC_HOST>/robots.txt` should fail):
-  seats run as their own users (uid 3000+), not the pool UIDs the kernel egress rules cover;
-- web search tools run at the model provider, not on the VM, so the denial doesn't cover
-  them: every response is `noindex`, `robots.txt` disallows everything and the cards are
-  only in JSON the page fetches, so search results don't carry them;
+  table), `PUBLIC_HOST` serves the table only;
+- every response is `noindex`, `robots.txt` disallows everything and the cards are only
+  in JSON the page fetches, so search results don't carry them;
 - the tool audit records web searches by Claude Code, Codex, Gemini CLI and Antigravity
   CLI seats (Codex's is a `web_search_call` item, agy's its `search_web` tool): see Tests
   below. A search a provider runs inside the model without a tool call (search grounding)
@@ -534,8 +538,7 @@ read the live page during the series:
    for the upload host once you approve that host for the engine terminal (the first
    upload asks: header `Authorization`, format `Bearer %s`). Deny any request for it from a
    seat terminal.
-3. On the dashboard, **Deny Always** `PUBLIC_HOST`.
-4. In the engine terminal's settings: `RELAY_TARGET=https://pokerbench-relay.orcabot.workers.dev/tables/pokerbench`
+3. In the engine terminal's settings: `RELAY_TARGET=https://pokerbench-relay.orcabot.workers.dev/tables/pokerbench`
    (and `RELAY_DELAY`, default 120), then restart it between series. The table is
    `https://pokerbench.orcabot.com/tables/pokerbench`, the name the benchmark page embeds.
 

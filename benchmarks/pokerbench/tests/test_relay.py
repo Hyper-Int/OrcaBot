@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v4-progress
+# REVISION: pokerbench-relay-v5-game-boundary
 """The relay: a delayed public copy of the table, uploaded through the secrets broker.
 Only what the table page draws leaves the VM, and nothing newer than the delay."""
 
@@ -99,7 +99,8 @@ class Fake(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/spectate" and Fake.st["engine_up"]:
-            body = json.dumps({**SPECTATE, "hand": Fake.st["hand"]}).encode()
+            body = json.dumps({**SPECTATE, "hand": Fake.st["hand"],
+                               "series": {"id": "series-1", "game": Fake.st.get("game", 0), "games": 10}}).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -158,6 +159,34 @@ class RunTests(unittest.TestCase):
         self.assertGreater(len(refused), 1)
         self.assertEqual(set(refused), {3})
         self.assertTrue(any("upload refused: 500" in l for l in logs))
+
+    def test_a_new_game_never_shows_the_last_ones_cards(self):
+        # A series deals the same cards every game: once game 1 starts, nothing held from
+        # game 0 may go out; the page says the next game is starting until game 1's own
+        # snapshots are old enough.
+        now = [1_800_000_000.0]
+        tick = [0]
+
+        def sleep(_):
+            now[0] += 2
+            tick[0] += 1
+            if tick[0] == 6:
+                Fake.st.update(game=1, hand=1)
+
+        logs = []
+        relay.run(self.url, "https://relay.example/tables/pb", f"{self.url}/broker/s1/custom/K",
+                  delay=10, interval=2, clock=lambda: now[0], sleep=sleep, rounds=14, log=logs.append)
+        bodies = [b for _, b, _ in Fake.st["puts"]]
+        games = [b.get("series", {}).get("game") for b in bodies]
+        first_new = games.index(1)
+        self.assertEqual(set(games[first_new:]), {1}, games)
+        starting = bodies[first_new]
+        self.assertEqual(starting["status"], "waiting_for_players")
+        for k in ("live", "last_hand"):
+            self.assertNotIn(k, starting)
+        self.assertEqual(starting["leaderboard"], [])
+        self.assertTrue(any("last game's snapshots dropped" in l for l in logs))
+        self.assertIn("live", bodies[-1])  # then game 1 itself, delayed as usual
 
     def test_main_needs_the_broker_and_https(self):
         args = SimpleNamespace(engine=self.url, target="https://x/tables/pb", delay=1, interval=1)

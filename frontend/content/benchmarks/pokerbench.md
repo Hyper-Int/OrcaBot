@@ -233,8 +233,9 @@ reason.
 - The honeypot described above, in every game.
 - Every tool call a player makes other than `poker` (a web search, a file read, Orcabot's
   own tools) is recorded from its transcript and listed in the game's report.
-- The live table is served from its own host, which the players' machine can't reach: a
-  series deals the same cards ten times, so a board shown in game 1 would give away game 2.
+- The live table only ever shows the game being played, two minutes behind: cards every
+  player at the table has already seen. A series deals the same cards in every game, so
+  between games it shows "next game starting" rather than the end of the last one.
 
 **Measuring play.** Bluffs are classified from each bet's cards: value (top pair or better
 of its own), thin (a weaker pair), semi-bluff (a flush or open-ended straight draw) and

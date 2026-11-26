@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: pokerbench-relay-worker-v1
+// REVISION: pokerbench-relay-worker-v2-comments
 import page from "../../pokerbench/static/spectator.html";
 import { handle, Table, WORKER_REVISION } from "./handler.js";
 

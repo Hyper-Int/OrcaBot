@@ -1,10 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: pokerbench-relay-worker-v1
+// REVISION: pokerbench-relay-worker-v2-comments
 //
 // The public side of a PokerBench table (pokerbench/relay.py uploads a delayed copy).
-// Two hosts, so the seats' VM can be denied the public one while the engine uploads to
-// the other:
+// Two hosts, so the upload host serves nothing and the public one takes nothing:
 //   UPLOAD_HOST  PUT /tables/<name>        the snapshot, with Authorization: Bearer RELAY_KEY
 //                                          (added by the Orcabot secrets broker, never seen
 //                                          by the engine terminal). Nothing else.
@@ -13,7 +12,7 @@
 //                GET /robots.txt           Disallow: / (and noindex on every response)
 // Fail-closed: no RELAY_KEY, no hosts or the same host twice -> nothing is served.
 
-export const WORKER_REVISION = "pokerbench-relay-worker-v1";
+export const WORKER_REVISION = "pokerbench-relay-worker-v2-comments";
 export const MAX_BODY = 200_000;
 const NAME = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const NOINDEX = { "X-Robots-Tag": "noindex, nofollow, noarchive" };

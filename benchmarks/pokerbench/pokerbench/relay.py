@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v4-progress
+# REVISION: pokerbench-relay-v5-game-boundary
 """A delayed public copy of the table, for watching a game from outside Orcabot.
 
 Every ``interval`` seconds the relay reads the engine's spectator view (/api/spectate:
@@ -15,9 +15,13 @@ through the sandbox's secrets broker ($POKERBENCH_RELAY_KEY_BROKER?target=https:
 which adds it for the approved upload host only. Seats can't read the public page from
 the VM if its host is denied on the dashboard ("Deny Always"); see README "Live page".
 
-A series deals the same cards in every game (seats rotated), so a board shown publicly
-in game 1 is the board of that deal in games 2-10: keeping seats off the page matters
-for the whole series, not just the hand in play.
+A series deals the same cards in every game (seats rotated), so a board from game 1 is
+the board of that deal in games 2-10. The seats can reach the public page (they run as
+their own users, outside the sandbox's egress control), so the page must never show a
+board from another game of the series while one is being played: when a new game
+starts, the snapshots still held from the last one are dropped, and until the new
+game's are ``delay`` seconds old the page shows "next game starting", with no cards.
+Within a game it shows only what every seat at the table has already seen.
 
     pokerbench relay --target https://relay.example.workers.dev/tables/pokerbench --delay 120
 """
@@ -34,7 +38,7 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 
-RELAY_REVISION = "pokerbench-relay-v4-progress"
+RELAY_REVISION = "pokerbench-relay-v5-game-boundary"
 
 # What the table page draws; anything else in /api/spectate stays on the VM (seat kinds
 # and models beyond the label, seat status messages, uids). A whitelist: a field added to
@@ -68,6 +72,20 @@ def public_view(spectate: dict) -> dict:
     if isinstance(last, dict):
         out["last_hand"] = {k: last[k] for k in LAST_HAND if k in last}
     return out
+
+
+def game_key(view: dict):
+    """Which game a snapshot is from: (series, game) in a series, else None."""
+    sr = view.get("series")
+    return (sr.get("id"), sr.get("game")) if isinstance(sr, dict) else None
+
+
+def starting_view(view: dict) -> dict:
+    """A new game is starting: who is playing and the progress, but no cards or results."""
+    out = {k: view[k] for k in ("revision", "seats", "labels", "hands_total", "big_blind", "format", "series",
+                                "progress") if k in view}
+    return {**out, "status": "waiting_for_players", "joined": list(view.get("seats") or []),
+            "hands_played": 0, "leaderboard": [], "recent": [], "counters": {}}
 
 
 class DelayBuffer:
@@ -134,7 +152,7 @@ def run(engine: str, target: str, broker: str, delay: float, interval: float = 2
         results_dir: str = "/workspace/pokerbench-results") -> None:
     """Poll, delay, upload until stopped (``rounds``: for tests). Never raises on a
     failed read or upload: the engine and the game don't depend on it."""
-    buf, sent, n, seen = DelayBuffer(delay), None, 0, {}
+    buf, sent, n, seen, game = DelayBuffer(delay), None, 0, {}, None
     url = upload_url(broker, target)
     log(f"[relay] REVISION: {RELAY_REVISION} loaded at {_iso(clock())}: {engine} -> {target}, {delay:g}s behind")
     while rounds is None or n < rounds:
@@ -144,7 +162,16 @@ def run(engine: str, target: str, broker: str, delay: float, interval: float = 2
             with urllib.request.urlopen(f"{engine}/api/spectate", timeout=5) as r:
                 # Progress across finished series games (the benchmark's hand count), as
                 # of this snapshot. REVISION: pokerbench-relay-v4-progress
-                buf.push(now, {**public_view(json.load(r)), "progress": results_progress(results_dir, seen)})
+                view = {**public_view(json.load(r)), "progress": results_progress(results_dir, seen)}
+            key = game_key(view)
+            if game is not None and key != game:
+                # A new game: drop the last game's snapshots (its cards come round again in
+                # this one) and say so now. REVISION: pokerbench-relay-v5-game-boundary
+                buf.items.clear()
+                buf.push(now - delay, starting_view(view))
+                log(f"[relay] {_iso(now)} game {key} started: last game's snapshots dropped")
+            game = key
+            buf.push(now, view)
         except (OSError, ValueError):
             pass  # between games of a series the engine is down for a few seconds
         ready = buf.due(now)

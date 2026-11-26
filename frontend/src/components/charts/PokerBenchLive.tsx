@@ -3,12 +3,12 @@
 
 "use client";
 
-// REVISION: pokerbench-live-v2-state-url
+// REVISION: pokerbench-live-v3-boundary-note
 // The PokerBench table, live but delayed, embedded in the benchmark page
 // (```chart pokerbench-live```). The table itself is served by the PokerBench relay
-// Worker (benchmarks/pokerbench/relay-worker) on its own host: the benchmark's agents
-// are denied that host, and a series deals the same cards in every game, so the
-// cards must never be on a page they can reach. This page carries only the frame.
+// Worker (benchmarks/pokerbench/relay-worker) on its own host. A series deals the same
+// cards in every game, so the relay only ever publishes the game being played (never the
+// last one's cards: pokerbench/relay.py). This page carries only the frame.
 
 import * as React from "react";
 
@@ -18,7 +18,7 @@ export const POKERBENCH_LIVE_URL =
 /** The table's latest public snapshot (JSON, CORS-open), for the headline chart's progress. */
 export const POKERBENCH_STATE_URL = `${POKERBENCH_LIVE_URL}/state`;
 
-const MODULE_REVISION = "pokerbench-live-v2-state-url";
+const MODULE_REVISION = "pokerbench-live-v3-boundary-note";
 console.log(`[pokerbench-live] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export function PokerBenchLive() {

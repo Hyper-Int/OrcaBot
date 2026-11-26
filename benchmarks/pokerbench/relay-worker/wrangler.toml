@@ -1,4 +1,4 @@
-# REVISION: pokerbench-relay-worker-v1
+# REVISION: pokerbench-relay-worker-v2-comments
 # The public side of a PokerBench table (README "Live page"). Before deploying, set the two
 # hosts below, then: wrangler secret put RELAY_KEY -c benchmarks/pokerbench/relay-worker/wrangler.toml
 name = "pokerbench-relay"
@@ -22,7 +22,7 @@ new_sqlite_classes = ["Table"]
 [vars]
 # Uploads only (the engine's VM is allowed this one): e.g. the workers.dev host.
 UPLOAD_HOST = "pokerbench-relay.orcabot.workers.dev"
-# The public table (deny it on the PokerBench dashboard), embedded in
+# The public table (only ever the game being played: relay.py), embedded in
 # orcabot.com/benchmarks/pokerbench (frontend/src/components/charts/PokerBenchLive.tsx).
 PUBLIC_HOST = "pokerbench.orcabot.com"
 # Who may embed the page in an iframe: the Orcabot site (and dev, to try it there).
