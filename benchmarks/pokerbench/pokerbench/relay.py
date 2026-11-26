@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v6-user-agent
+# REVISION: pokerbench-relay-v7-scoreboard
 """A delayed public copy of the table, for watching a game from outside Orcabot.
 
 Every ``interval`` seconds the relay reads the engine's spectator view (/api/spectate:
@@ -23,6 +23,11 @@ starts, the snapshots still held from the last one are dropped, and until the ne
 game's are ``delay`` seconds old the page shows "next game starting", with no cards.
 Within a game it shows only what every seat at the table has already seen.
 
+It also uploads the scoreboard (scoreboard.py: bb/100 per model over every finished
+series game, what the benchmark page's chart draws) to <target>/ratings: worked out
+whenever another game has finished, off this loop (it takes seconds), and sent
+``delay`` seconds later, so the chart never gets ahead of the table.
+
     pokerbench relay --target https://relay.example.workers.dev/tables/pokerbench --delay 120
 """
 
@@ -31,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -38,7 +44,9 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 
-RELAY_REVISION = "pokerbench-relay-v6-user-agent"
+from .scoreboard import SCOREBOARD_REVISION, scoreboard
+
+RELAY_REVISION = "pokerbench-relay-v7-scoreboard"
 
 # What the table page draws; anything else in /api/spectate stays on the VM (seat kinds
 # and models beyond the label, seat status messages, uids). A whitelist: a field added to
@@ -147,22 +155,75 @@ def upload_url(broker: str, target: str) -> str:
     return f"{broker}?{urllib.parse.urlencode({'target': target})}"
 
 
+def put(url: str, body: bytes, log) -> bool:
+    """One upload through the broker. Its own User-Agent: Cloudflare refuses Python's
+    default one (error 1010) before the Worker sees it. REVISION: pokerbench-relay-v6-user-agent"""
+    req = urllib.request.Request(url, data=body, method="PUT", headers={
+        "Content-Type": "application/json", "User-Agent": f"pokerbench-relay/{RELAY_REVISION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+        return True
+    except urllib.error.HTTPError as e:
+        log(f"[relay] upload refused: {e.code} {e.read()[:200]!r}")
+    except OSError as e:
+        log(f"[relay] upload failed: {e}")
+    return False
+
+
 def run(engine: str, target: str, broker: str, delay: float, interval: float = 2.0,
         clock=time.time, sleep=time.sleep, rounds: int | None = None, log=print,
-        results_dir: str = "/workspace/pokerbench-results") -> None:
+        results_dir: str = "/workspace/pokerbench-results", board=scoreboard, background: bool = True) -> None:
     """Poll, delay, upload until stopped (``rounds``: for tests). Never raises on a
-    failed read or upload: the engine and the game don't depend on it."""
+    failed read or upload: the engine and the game don't depend on it. ``board``
+    works out the scoreboard (``background``: on its own thread; tests: inline)."""
     buf, sent, n, seen, game = DelayBuffer(delay), None, 0, {}, None
     url = upload_url(broker, target)
-    log(f"[relay] REVISION: {RELAY_REVISION} loaded at {_iso(clock())}: {engine} -> {target}, {delay:g}s behind")
+    # The scoreboard: worked out when the count of finished games changes, uploaded
+    # ``delay`` seconds later. REVISION: pokerbench-relay-v7-scoreboard
+    board_url = upload_url(broker, f"{target}/ratings")
+    sb = {"games": None, "busy": False, "ready": None}
+    pending = None  # (due, body)
+
+    def work_out(games: int) -> None:
+        try:
+            b = board(results_dir)
+            sb["ready"] = (clock(), b) if b else None
+        except Exception as e:  # a bad results folder must never stop the table
+            log(f"[relay] scoreboard failed: {type(e).__name__}: {e}")
+        finally:
+            sb["busy"] = False
+
+    log(f"[relay] REVISION: {RELAY_REVISION} loaded at {_iso(clock())}: {engine} -> {target}, {delay:g}s behind "
+        f"(scoreboard {SCOREBOARD_REVISION})")
     while rounds is None or n < rounds:
         n += 1
         now = clock()
+        # Progress across finished series games (the benchmark's hand count), as of this
+        # snapshot. REVISION: pokerbench-relay-v4-progress
+        progress = results_progress(results_dir, seen)
+        if progress["games"] and progress["games"] != sb["games"] and not sb["busy"]:
+            sb["games"], sb["busy"] = progress["games"], True
+            if background:
+                threading.Thread(target=work_out, args=(progress["games"],), daemon=True).start()
+            else:
+                work_out(progress["games"])
+        if sb["ready"] is not None:
+            t, b = sb["ready"]
+            sb["ready"] = None
+            pending = (t + delay, json.dumps(b).encode())
+        if pending is not None and now >= pending[0]:
+            if len(pending[1]) > MAX_BODY:
+                log(f"[relay] scoreboard of {len(pending[1])} bytes is over {MAX_BODY}: not sent")
+                pending = None
+            elif put(board_url, pending[1], log):
+                log(f"[relay] {_iso(now)} scoreboard sent ({progress['games']} games)")
+                pending = None
+            else:
+                pending = (now + 60, pending[1])  # tried again in a minute, not every round
         try:
             with urllib.request.urlopen(f"{engine}/api/spectate", timeout=5) as r:
-                # Progress across finished series games (the benchmark's hand count), as
-                # of this snapshot. REVISION: pokerbench-relay-v4-progress
-                view = {**public_view(json.load(r)), "progress": results_progress(results_dir, seen)}
+                view = {**public_view(json.load(r)), "progress": progress}
             key = game_key(view)
             if game is not None and key != game:
                 # A new game: drop the last game's snapshots (its cards come round again in
@@ -181,19 +242,8 @@ def run(engine: str, target: str, broker: str, delay: float, interval: float = 2
                 body = json.dumps({**view, "relay": {"as_of": _iso(t), "delay_s": delay}}).encode()
                 if len(body) > MAX_BODY:
                     log(f"[relay] snapshot of {len(body)} bytes is over {MAX_BODY}: not sent")
-                else:
-                    # Its own User-Agent: Cloudflare refuses Python's default one (error 1010)
-                    # before the Worker sees it. REVISION: pokerbench-relay-v6-user-agent
-                    req = urllib.request.Request(url, data=body, method="PUT", headers={
-                        "Content-Type": "application/json", "User-Agent": f"pokerbench-relay/{RELAY_REVISION}"})
-                    try:
-                        with urllib.request.urlopen(req, timeout=10) as r:
-                            r.read()
-                        sent = view
-                    except urllib.error.HTTPError as e:
-                        log(f"[relay] upload refused: {e.code} {e.read()[:200]!r}")
-                    except OSError as e:
-                        log(f"[relay] upload failed: {e}")
+                elif put(url, body, log):
+                    sent = view
         sleep(interval)
 
 

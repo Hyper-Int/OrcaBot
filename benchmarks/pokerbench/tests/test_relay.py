@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-relay-v6-user-agent
+# REVISION: pokerbench-relay-v7-scoreboard
 """The relay: a delayed public copy of the table, uploaded through the secrets broker.
 Only what the table page draws leaves the VM, and nothing newer than the delay."""
 
@@ -190,6 +190,67 @@ class RunTests(unittest.TestCase):
         self.assertEqual(starting["leaderboard"], [])
         self.assertTrue(any("last game's snapshots dropped" in l for l in logs))
         self.assertIn("live", bodies[-1])  # then game 1 itself, delayed as usual
+
+    def test_scoreboard_goes_to_ratings_behind_the_delay_when_a_game_finishes(self):
+        # REVISION: pokerbench-relay-v7-scoreboard
+        now = [1_800_000_000.0]
+        tick = [0]
+        with tempfile.TemporaryDirectory() as d:
+            def finish(name):
+                g = Path(d) / name
+                g.mkdir()
+                (g / "run.json").write_text(json.dumps({"status": "finished", "config": {
+                    "format": "cash", "betting": "no-limit", "series": "series-1"}}))
+                (g / "hand_results.jsonl").write_text("{}\n" * 100)
+
+            finish("g1")
+            worked = []
+
+            def board(results_dir):
+                worked.append(now[0])
+                games = len(list(Path(results_dir).iterdir()))
+                return {"games": games, "models": [{"model": "m", "bb_per_100": float(games)}]}
+
+            def sleep(_):
+                now[0] += 2
+                tick[0] += 1
+                if tick[0] == 8:
+                    finish("g2")
+
+            logs = []
+            relay.run(self.url, "https://relay.example/tables/pb", f"{self.url}/broker/s1/custom/K",
+                      delay=6, interval=2, clock=lambda: now[0], sleep=sleep, rounds=20, log=logs.append,
+                      results_dir=d, board=board, background=False)
+        ratings = [(p, b) for p, b, _ in Fake.st["puts"]
+                   if urllib.parse.parse_qs(urllib.parse.urlsplit(p).query)["target"][0].endswith("/ratings")]
+        self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(ratings[0][0]).query)["target"],
+                         ["https://relay.example/tables/pb/ratings"])
+        # Worked out once per finished game count, not every round; each sent once.
+        self.assertEqual(len(worked), 2)
+        self.assertEqual([b["games"] for _, b in ratings], [1, 2])
+        self.assertTrue(any("scoreboard sent (1 games)" in l for l in logs))
+        # Sent ``delay`` after it was worked out (the first round, t0): at t0+6, round 4.
+        first = next(i for i, l in enumerate(logs) if "scoreboard sent" in l)
+        self.assertIn("2027-01-15T08:00:06Z", logs[first])
+
+    def test_a_refused_scoreboard_is_tried_again_a_minute_later(self):
+        now = [1_800_000_000.0]
+        Fake.st["put_status"] = 404
+        with tempfile.TemporaryDirectory() as d:
+            g = Path(d) / "g1"
+            g.mkdir()
+            (g / "run.json").write_text(json.dumps({"status": "finished", "config": {
+                "format": "cash", "betting": "no-limit", "series": "series-1"}}))
+            (g / "hand_results.jsonl").write_text("{}\n")
+
+            def sleep(_):
+                now[0] += 2
+
+            relay.run(self.url, "https://relay.example/tables/pb", f"{self.url}/broker/s1/custom/K",
+                      delay=0, interval=2, clock=lambda: now[0], sleep=sleep, rounds=40, log=lambda *_: None,
+                      results_dir=d, board=lambda _: {"models": []}, background=False)
+        tries = [p for p, _, _ in Fake.st["puts"] if "ratings" in urllib.parse.unquote(p)]
+        self.assertEqual(len(tries), 2)  # rounds 1 and 31 (60s later), not all 40
 
     def test_main_needs_the_broker_and_https(self):
         args = SimpleNamespace(engine=self.url, target="https://x/tables/pb", delay=1, interval=1)
