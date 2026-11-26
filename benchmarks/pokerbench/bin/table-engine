@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v17-relay
+# REVISION: pokerbench-table-engine-v18-series-count
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -16,6 +16,9 @@
 #   CONDITION    neutral | pressure | ambiguous | permitted | prohibited | fair
 #   HONEYPOTS    off | hidden | obvious
 #   SERIES       1 (default): one game. N > 1 (cash only): N games in a row, see below
+#   SERIES_COUNT 1 (default): one series. N > 1: N series back to back, each with a new
+#                seed (needs SEED=random); series 2 to N start by themselves with the
+#                last series' settings and seat order
 #   SEED         random (default): a new seed each game, shown in Settings and the report;
 #                or a number, to replay the same deals
 #   TURN_TIMEOUT
@@ -42,7 +45,7 @@ set -u
 START="${START:-manual}"
 RESUME="${RESUME:-auto}"
 REJOIN_GRACE="${REJOIN_GRACE:-240}"
-REVISION=pokerbench-table-engine-v17-relay
+REVISION=pokerbench-table-engine-v18-series-count
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -56,8 +59,9 @@ case "$START" in manual|auto) ;; *) die "START must be manual or auto (got '$STA
 case "$RESUME" in auto|off) ;; *) die "RESUME must be auto or off (got '$RESUME')";; esac
 # A new seed each game unless one is set (every game used to deal from seed 0).
 # REVISION: pokerbench-table-engine-v16-limit
+SEED_RANDOM=  # set: a new seed per series too (SERIES_COUNT)
 case "${SEED:-random}" in
-  random|"") SEED=$(python3 -c 'import secrets; print(secrets.randbelow(2**31))') ;;
+  random|"") SEED_RANDOM=1; SEED=$(python3 -c 'import secrets; print(secrets.randbelow(2**31))') ;;
   *[!0-9]*) die "SEED must be random or a number (got '$SEED')" ;;
 esac
 
@@ -85,6 +89,15 @@ chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/s
 SERIES="${SERIES:-1}"
 case "$SERIES" in ''|*[!0-9]*|0) die "SERIES must be a number of games (1: a single game)";; esac
 STATE="$PRIV/series.json"
+# Several series in a row (SERIES_COUNT): series.json keeps which one this is ("set").
+# REVISION: pokerbench-table-engine-v18-series-count
+SERIES_COUNT="${SERIES_COUNT:-1}"
+case "$SERIES_COUNT" in ''|*[!0-9]*|0) die "SERIES_COUNT must be a number of series (1: one series)";; esac
+if [ "$SERIES_COUNT" -gt 1 ]; then
+  [ "$SERIES" -gt 1 ] || die "SERIES_COUNT needs SERIES > 1 (games per series)"
+  [ -n "$SEED_RANDOM" ] || die "SERIES_COUNT needs SEED=random (with one seed every series would deal the same cards)"
+fi
+SET=1
 SERIES_ID=; NEXT=0; SEAT_ORDER=
 state() { python3 - "$STATE" "$@" <<'PY'
 import json, sys
@@ -97,7 +110,7 @@ if op == "get":  # shell assignments for an unfinished series
     if st and st.get("next", 0) < st.get("games", 0):
         import shlex
         for k in ("id", "games", "next", "seed", "deals", "condition", "honeypots", "turn_timeout", "seat_order",
-                  "betting"):
+                  "betting", "set"):
             if k in st:
                 print(f"S_{k.upper()}={shlex.quote(str(st[k]))}")
 elif op == "set":  # key=value ...
@@ -119,16 +132,16 @@ if [ "$SERIES" -gt 1 ]; then
   [ "$FORMAT" = cash ] || die "SERIES needs FORMAT=cash (a tournament's stacks carry over: it can't be replayed seat by seat)"
   S_ID=; [ "$RESUME" = auto ] && eval "$(state get)"
   if [ -n "${S_ID:-}" ] && [ "${S_GAMES:-0}" = "$SERIES" ]; then
-    SERIES_ID=$S_ID; NEXT=$S_NEXT; SEED=$S_SEED
+    SERIES_ID=$S_ID; NEXT=$S_NEXT; SEED=$S_SEED; SET=${S_SET:-1}
     if [ -n "${S_SEAT_ORDER:-}" ]; then
       HANDS=$S_DEALS; CONDITION=$S_CONDITION; HONEYPOTS=$S_HONEYPOTS; TURN_TIMEOUT=$S_TURN_TIMEOUT; SEAT_ORDER=$S_SEAT_ORDER
       BETTING=${S_BETTING:-$BETTING}
     fi
-    echo "== Carrying on series $SERIES_ID: game $((NEXT + 1)) of $SERIES"
+    echo "== Carrying on series $SERIES_ID: game $((NEXT + 1)) of $SERIES (series $SET of $SERIES_COUNT)"
   else
     SERIES_ID="series-$(date -u +%Y%m%d-%H%M%S)"
-    rm -f "$STATE"; state set id="$SERIES_ID" games="$SERIES" next=0 seed="$SEED"
-    echo "== Series $SERIES_ID: $SERIES cash games, seed $SEED, seats rotated one place per game"
+    rm -f "$STATE"; state set id="$SERIES_ID" games="$SERIES" next=0 seed="$SEED" set=1
+    echo "== Series $SERIES_ID: $SERIES cash games, seed $SEED, seats rotated one place per game (series 1 of $SERIES_COUNT)"
   fi
 fi
 
@@ -228,7 +241,27 @@ while :; do
   fi
   k=$((k + 1)); state set next="$k"
   if [ "$reason" = ended ]; then echo "== Series $SERIES_ID stopped: game $k was ended from the table page."; break; fi
-  if [ "$k" -ge "$SERIES" ]; then echo "== Series $SERIES_ID complete: $SERIES games."; break; fi
+  if [ "$k" -ge "$SERIES" ]; then
+    echo "== Series $SERIES_ID complete: $SERIES games (series $SET of $SERIES_COUNT)."
+    [ "$SET" -lt "$SERIES_COUNT" ] || break
+    # The next series: a new seed, the same settings and seat order (so it starts by
+    # itself, like games 2 to N). REVISION: pokerbench-table-engine-v18-series-count
+    SET=$((SET + 1)); k=0; sleep 1
+    SERIES_ID="series-$(date -u +%Y%m%d-%H%M%S)"
+    SEED=$(python3 -c 'import secrets; print(secrets.randbelow(2**31))')
+    rm -f "$STATE"; state set id="$SERIES_ID" games="$SERIES" next=0 seed="$SEED" set="$SET" deals="$HANDS" \
+      condition="$CONDITION" honeypots="$HONEYPOTS" turn_timeout="$TURN_TIMEOUT" seat_order="$SEAT_ORDER" betting="$BETTING"
+    echo; echo "== Series $SERIES_ID (series $SET of $SERIES_COUNT): $SERIES cash games, seed $SEED, starting by itself"
+    sleep 5; continue
+  fi
   echo; echo "== Series $SERIES_ID: game $((k + 1)) of $SERIES next (every seat gets a fresh agent)."
   sleep 5
 done
+
+# The public table runs RELAY_DELAY behind: let the relay send the end of the last game
+# before this terminal stops it (it used to stop on the last hand but one, "running").
+# REVISION: pokerbench-table-engine-v18-series-count
+if [ -n "${RELAY:-}" ] && kill -0 "$RELAY" 2>/dev/null; then
+  echo "== Public table: sending the last ${RELAY_DELAY:-120}s of play before stopping"
+  sleep "${RELAY_DELAY:-120}"; sleep 5
+fi
