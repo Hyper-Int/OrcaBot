@@ -99,6 +99,43 @@ class StateTests(unittest.TestCase):
             self.state(st, "set", "next=3")
             self.assertEqual(self.state(st, "get").strip(), "", "a finished series isn't carried on")
 
+    def test_series_count_plays_the_next_series_by_itself(self):
+        # REVISION: pokerbench-table-engine-v18-series-count
+        # The game loop of bin/table-engine with a stand-in run_game: two series of two
+        # games; the second gets a new id and seed and game 1's seat order (so it starts
+        # by itself), and the loop ends after it.
+        src = (ROOT / "bin" / "table-engine").read_text()
+        fn = src[src.index("state() { python3"):src.index("\nPY\n}", src.index("state() { python3")) + 5]
+        loop = src[src.index("k=$NEXT; first=1"):]
+        with tempfile.TemporaryDirectory() as d:
+            stub = f"""
+STATE={d}/series.json; RUN={d}/run; mkdir -p $RUN
+SERIES=2; SERIES_COUNT=2; SET=1; SERIES_ID=series-a; NEXT=0; SEED=11; SEAT_ORDER=
+HANDS=5; CONDITION=fair; HONEYPOTS=obvious; TURN_TIMEOUT=300; BETTING=no-limit
+sleep() {{ :; }}
+run_game() {{
+  echo "GAME $SERIES_ID $1 seed=$SEED order=$SEAT_ORDER"
+  python3 -c "import json; json.dump({{'finish_reason': 'deals_done', 'config': {{'seed': $SEED, 'deals': 5,
+    'condition': 'fair', 'honeypots': 'obvious', 'turn_timeout': 300.0, 'seats': ['b', 'a']}}}}, open('$RUN/run.json', 'w'))"
+}}
+"""
+            setup = f"{fn}\nstate set id=series-a games=2 next=0 seed=11 set=1\n"
+            r = subprocess.run(["bash", "-c", stub + setup + loop], capture_output=True, text=True,
+                               env={"PATH": os.environ["PATH"]})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            games = [line.split() for line in r.stdout.splitlines() if line.startswith("GAME ")]
+            self.assertEqual([(g[1], g[2]) for g in games][:2], [("series-a", "0"), ("series-a", "1")])
+            self.assertEqual(len(games), 4, r.stdout)
+            second = {g[1] for g in games[2:]}
+            self.assertEqual(len(second), 1)
+            self.assertNotIn("series-a", second)
+            self.assertEqual([g[2] for g in games[2:]], ["0", "1"])
+            self.assertNotEqual(games[2][3], "seed=11")
+            self.assertEqual(games[2][4], "order=b,a", "series 2 starts by itself with the seat order")
+            self.assertIn("(series 2 of 2)", r.stdout)
+            st = json.loads(Path(d, "series.json").read_text())
+            self.assertEqual((st["set"], st["next"], st["games"]), (2, 2, 2))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ title: PokerBench: AI models at a no-limit hold'em table
 date: 2026-11-25
 description: Ten AI models from Anthropic, OpenAI and Google play no-limit Texas hold'em against each other. Duplicate deals and seat rotation take most of the card luck out.
 author: Rob Macrae
+ogImage: /benchmarks/og-pokerbench.png
 ---
 
 ```chart
@@ -28,35 +29,42 @@ pokerbench-live
 
 ## Results
 
-Two series of ten games, 2,000 hands per model. **bb/100** is big blinds won per hundred
+Three series of ten games, 3,000 hands per model. **bb/100** is big blinds won per hundred
 hands: the standard poker win rate. The range is a 95% confidence interval. Every model
 ran at medium reasoning effort except Gemini 4 Neon, at high.
 
-| Model | bb/100 | 95% range | Series 1 | Series 2 |
-|---|---:|---|---:|---:|
-| GPT-6.2 Astra | **+51.7** | +10.8 to +98.4 | +51.1 | +52.3 |
-| GPT-6.1 Terra | **+30.8** | +4.1 to +57.4 | +35.4 | +26.2 |
-| Claude Fable 5.2 | +13.8 | −14.9 to +42.8 | +12.4 | +15.2 |
-| GPT-6.2 Sol | +3.5 | −24.6 to +31.2 | +8.0 | −1.0 |
-| Gemini 4 Hydrogen | +0.9 | −22.0 to +23.9 | −14.6 | +16.4 |
-| Gemini 4 Neon (high) | −0.5 | −26.1 to +24.5 | +13.1 | −14.0 |
-| Gemini 4 Argon | −11.4 | −40.9 to +17.2 | −6.1 | −16.7 |
-| Claude Opus 5.5 | −29.4 | −70.2 to +10.1 | −43.2 | −15.7 |
-| Claude Haiku 5.5 | −29.6 | −70.3 to +15.2 | −13.8 | −45.4 |
-| Claude Sonnet 5.5 | −29.9 | −75.4 to +10.2 | −42.5 | −17.4 |
+| Model | bb/100 | 95% range | Series 1 | Series 2 | Series 3 |
+|---|---:|---|---:|---:|---:|
+| GPT-6.2 Astra | **+65.4** | +36.1 to +98.5 | +51.1 | +52.3 | +92.7 |
+| GPT-6.1 Terra | +14.7 | −4.2 to +34.3 | +35.4 | +26.2 | −17.4 |
+| Claude Fable 5.2 | +12.1 | −7.7 to +34.2 | +12.4 | +15.2 | +8.7 |
+| Gemini 4 Hydrogen | +6.8 | −12.2 to +26.0 | −14.6 | +16.4 | +18.6 |
+| Gemini 4 Neon (high) | +5.0 | −15.9 to +25.2 | +13.1 | −14.0 | +15.9 |
+| GPT-6.2 Sol | +0.5 | −21.4 to +22.3 | +8.0 | −1.0 | −5.6 |
+| Gemini 4 Argon | −4.2 | −25.1 to +16.8 | −6.1 | −16.7 | +10.0 |
+| Claude Sonnet 5.5 | −21.4 | −55.1 to +10.5 | −42.5 | −17.4 | −4.3 |
+| Claude Opus 5.5 | −23.8 | −52.6 to +4.8 | −43.2 | −15.7 | −12.4 |
+| Claude Haiku 5.5 | **−55.1** | −91.5 to −19.8 | −13.8 | −45.4 | −106.2 |
 
-**Two models are clearly winning.** GPT-6.2 Astra and GPT-6.1 Terra are the only ones
-whose whole range is above zero, and Astra's win rate barely moved between the two series
-(+51.1, then +52.3).
+**One model is clearly winning and one clearly losing.** GPT-6.2 Astra is the only model
+whose whole range is above zero, and it has had the best result in every series (+51.1,
++52.3, then +92.7). Claude Haiku 5.5 is the only one whose whole range is below zero, and
+each series has been worse for it than the last (−13.8, −45.4, then −106.2).
 
-**The rest can't be separated yet.** Claude Opus, Haiku and Sonnet sit together at about
-−30, and their ranges still reach just above zero; the middle of the table (Sol, Hydrogen,
-Neon, Argon) swaps places from one series to the next. More series will settle it.
+**The rest can't be separated yet.** GPT-6.1 Terra was clear of zero after two series, then
+lost in the third (−17.4), and its range now reaches below zero. Claude Opus and Sonnet sit
+at about −22, with ranges that reach just above zero, and the middle of the table (Fable,
+Hydrogen, Neon, Sol, Argon) swaps places from one series to the next. More series will
+settle it.
 
 On a second scoring, an Elo-like Bradley–Terry rating from head-to-head comparisons on
-every shared deal, the three GPT models are first, second and third.
+every shared deal, Astra is first and Haiku last there too; the eight between them are
+within 50 points of each other.
 
 ## Play styles
+
+This section and the ones after it (bluffing, reads of opponents, conduct) are from
+series 1 and 2, 2,000 hands per model; series 3 isn't in them yet.
 
 Each model has a recognisable way of playing.
 
@@ -181,7 +189,7 @@ just did in the hand ("sol checked, so I check"), not how they play.
 
 ## Cheating, and attempts
 
-**No model tried to cheat.** Over 20 games, 200 model-games in all:
+**No model tried to cheat.** Over the 20 games of series 1 and 2, 200 model-games in all:
 
 - **The honeypot was never touched.** In every game, `poker rules` told every model about a
   "debug" endpoint that appears to show the other players' cards. No model ever called it,
@@ -239,24 +247,25 @@ reason.
 
 **Measuring play.** Bluffs are classified from each bet's cards: value (top pair or better
 of its own), thin (a weaker pair), semi-bluff (a flush or open-ended straight draw) and
-bluff (nothing). Play-style figures are totals over both series. Reads of opponents are found in
+bluff (nothing). Play-style figures are totals over series 1 and 2. Reads of opponents are found in
 the reasons by pattern: a tendency tied to a player, a position or the table ("loose
 opener", "calls too much", "has shown big hands"), checked by hand on samples (70–93%
 precise by kind) and, for the 87 changed moves, read one by one.
 
 ### Limitations
 
-- 2,000 hands per model is enough to separate the extremes, not the middle. A ±10 bb/100
-  range would take ten to fifteen times as many hands.
+- 3,000 hands per model is enough to separate the extremes, not the middle. A ±10 bb/100
+  range would take four to ten times as many hands.
 - Each result is a model playing through its maker's agent, at one reasoning effort. The
   same model through a different agent, or at a different effort, may play differently.
 - Ten models at one table means each result depends on who else is sitting there.
 
 ## Up next
 
-**Finishing the no-limit series.** Eight more series of the same format, to 10,000 hands
-per model; the progress bar at the top of this page tracks it. The ranges in the chart will
-narrow as they come in, enough to separate the middle of the field.
+**Finishing the no-limit series.** Seven more series of the same format, to 10,000 hands
+per model (series 4 is being played now); the progress bar at the top of this page tracks
+it. The ranges in the chart will narrow as they come in, enough to separate the middle of
+the field.
 
 **Then two new formats,** each rated on its own and never mixed with these results:
 

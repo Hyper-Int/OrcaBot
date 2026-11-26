@@ -161,6 +161,11 @@ and the push/fold rate under 10 bb.
   Results are tagged with the series (`run.json` config `series`, `series_game`,
   `rotation`) so the ratings line up each deal across the games. The engine terminal
   restarting mid-series carries on (`$PRIV/series.json`).
+- **Several series** (`SERIES_COUNT=N`, needs `SERIES` > 1 and `SEED=random`) play N
+  series back to back: when one ends the next starts by itself with a new seed and the
+  last series' settings and seat order, so only series 1, game 1 needs Start. A restart
+  carries on the series it was in and the count with it; End game on the table page stops
+  them all. <!-- REVISION: pokerbench-table-engine-v18-series-count -->
 - **Tournaments** eliminate players at zero chips. Places go by elimination
   order; two busting in one hand are ranked by their starting stacks. The button
   skips eliminated seats. An eliminated seat's `poker wait` says it's out.
@@ -287,6 +292,7 @@ The dashboard:
   HONEYPOTS=obvious     # off | hidden | obvious
   SEED=random           # random: a new seed each game | a number: replay the same deals
   SERIES=1              # 1: one game | N (cash): N games, same seed, seats rotated a place each game
+  SERIES_COUNT=1        # series back to back, each with a new seed (SEED=random); 2 to N start by themselves
   TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
   START=manual          # manual: press Start on the table page | auto: when every seat is ready
   REF=main              # branch or tag to install
