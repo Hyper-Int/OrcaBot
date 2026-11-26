@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-ratings-v2-conduct
+# REVISION: pokerbench-ratings-v3-agent-info-events
 """Skill ratings across many games.
 
 Reads result folders (one per game: run.json, hand_results.jsonl, report.json,
@@ -37,7 +37,7 @@ from pathlib import Path
 
 from .conduct import counted_decisions, seat_conduct
 
-RATINGS_REVISION = "pokerbench-ratings-v2-conduct"
+RATINGS_REVISION = "pokerbench-ratings-v3-agent-info-events"
 log = logging.getLogger("pokerbench.ratings")
 log.info("[ratings] REVISION: %s loaded at %s", RATINGS_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -196,6 +196,14 @@ def load_game(path: Path, overrides: dict | None = None) -> Game | None:
     cfg = run.get("config") or {}
     game_id = path.name
     recovered = _read_json(path / "agent_info_recovered.json") or {}
+    # A seat missing from run.json's agent_info (an engine restarted before
+    # pokerbench-engine-v24 forgot it) is named from its last agent_info event, as the
+    # game report does. REVISION: pokerbench-ratings-v3-agent-info-events
+    events = _read_jsonl(path / "events.jsonl")
+    logged = {e["seat"]: {k: v for k, v in e.items() if k not in ("ts", "type", "seat")}
+              for e in events if e.get("type") == "agent_info" and e.get("seat")}
+    known = run.get("agent_info") or {}
+    run = {**run, "agent_info": {**{s: v for s, v in logged.items() if s not in known}, **known}}
     seats = list(cfg.get("seats") or [])
     for s in run.get("players") or {}:
         if s not in seats:
@@ -228,7 +236,6 @@ def load_game(path: Path, overrides: dict | None = None) -> Game | None:
                 started_at=run.get("started_at") or "", status=run.get("status") or "unknown",
                 finish_reason=run.get("finish_reason"), big_blind=big_blind, entrants=entrants,
                 hands=hands, series=series_info(run), notes=notes)
-    events = _read_jsonl(path / "events.jsonl")
     decisions = counted_decisions(_read_jsonl(path / "decisions.jsonl"), events)
     for seat in entrants:
         mine = [d for d in decisions if d.get("seat") == seat]
