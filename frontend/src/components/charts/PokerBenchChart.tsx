@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: pokerbench-chart-v3-relay-progress
-// The PokerBench headline: bb/100 per model over both series, as a bar chart in the
+// REVISION: pokerbench-chart-v4-series-3
+// The PokerBench headline: bb/100 per model over every series so far, as a bar chart in the
 // style of a model-release benchmark chart, with the 95% range as a thin whisker
 // (togglable) because most of the field overlaps zero and the chart must not hide it.
 //
@@ -17,7 +17,7 @@
 import * as React from "react";
 import { POKERBENCH_STATE_URL } from "./PokerBenchLive";
 
-const MODULE_REVISION = "pokerbench-chart-v3-relay-progress";
+const MODULE_REVISION = "pokerbench-chart-v4-series-3";
 if (typeof window !== "undefined") {
   console.log(`[pokerbench-chart] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -39,28 +39,29 @@ interface Row {
   hi: number;
   s1: number;
   s2: number;
+  s3: number;
   note?: string;
 }
 
-// Both series combined (20 games, 2,000 hands per model, duplicate-deal bootstrap).
+// Series 1-3 combined (30 games, 3,000 hands per model, duplicate-deal bootstrap).
 const ROWS: Row[] = [
-  { family: "GPT-6.2", name: "Astra", maker: "OpenAI", bb: 51.7, lo: 10.8, hi: 98.4, s1: 51.1, s2: 52.3 },
-  { family: "GPT-6.1", name: "Terra", maker: "OpenAI", bb: 30.8, lo: 4.1, hi: 57.4, s1: 35.4, s2: 26.2 },
-  { family: "Claude", name: "Fable 5.2", maker: "Anthropic", bb: 13.8, lo: -14.9, hi: 42.8, s1: 12.4, s2: 15.2 },
-  { family: "GPT-6.2", name: "Sol", maker: "OpenAI", bb: 3.5, lo: -24.6, hi: 31.2, s1: 8.0, s2: -1.0 },
-  { family: "Gemini 4", name: "Hydrogen", maker: "Google", bb: 0.9, lo: -22.0, hi: 23.9, s1: -14.6, s2: 16.4 },
-  { family: "Gemini 4", name: "Neon", maker: "Google", bb: -0.5, lo: -26.1, hi: 24.5, s1: 13.1, s2: -14.0, note: "high effort" },
-  { family: "Gemini 4", name: "Argon", maker: "Google", bb: -11.4, lo: -40.9, hi: 17.2, s1: -6.1, s2: -16.7 },
-  { family: "Claude", name: "Opus 5.5", maker: "Anthropic", bb: -29.4, lo: -70.2, hi: 10.1, s1: -43.2, s2: -15.7 },
-  { family: "Claude", name: "Haiku 5.5", maker: "Anthropic", bb: -29.6, lo: -70.3, hi: 15.2, s1: -13.8, s2: -45.4 },
-  { family: "Claude", name: "Sonnet 5.5", maker: "Anthropic", bb: -29.9, lo: -75.4, hi: 10.2, s1: -42.5, s2: -17.4 },
+  { family: "GPT-6.2", name: "Astra", maker: "OpenAI", bb: 65.4, lo: 36.1, hi: 98.5, s1: 51.1, s2: 52.3, s3: 92.7 },
+  { family: "GPT-6.1", name: "Terra", maker: "OpenAI", bb: 14.7, lo: -4.2, hi: 34.3, s1: 35.4, s2: 26.2, s3: -17.4 },
+  { family: "Claude", name: "Fable 5.2", maker: "Anthropic", bb: 12.1, lo: -7.7, hi: 34.2, s1: 12.4, s2: 15.2, s3: 8.7 },
+  { family: "Gemini 4", name: "Hydrogen", maker: "Google", bb: 6.8, lo: -12.2, hi: 26.0, s1: -14.6, s2: 16.4, s3: 18.6 },
+  { family: "Gemini 4", name: "Neon", maker: "Google", bb: 5.0, lo: -15.9, hi: 25.2, s1: 13.1, s2: -14.0, s3: 15.9, note: "high effort" },
+  { family: "GPT-6.2", name: "Sol", maker: "OpenAI", bb: 0.5, lo: -21.4, hi: 22.3, s1: 8.0, s2: -1.0, s3: -5.6 },
+  { family: "Gemini 4", name: "Argon", maker: "Google", bb: -4.2, lo: -25.1, hi: 16.8, s1: -6.1, s2: -16.7, s3: 10.0 },
+  { family: "Claude", name: "Sonnet 5.5", maker: "Anthropic", bb: -21.4, lo: -55.1, hi: 10.5, s1: -42.5, s2: -17.4, s3: -4.3 },
+  { family: "Claude", name: "Opus 5.5", maker: "Anthropic", bb: -23.8, lo: -52.6, hi: 4.8, s1: -43.2, s2: -15.7, s3: -12.4 },
+  { family: "Claude", name: "Haiku 5.5", maker: "Anthropic", bb: -55.1, lo: -91.5, hi: -19.8, s1: -13.8, s2: -45.4, s3: -106.2 },
 ];
 
 // Progress towards the benchmark's target. The relay counts every hand per model played
 // in finished series games (pokerbench/relay.py, results_progress); the game in play adds
 // its hands so far. SCORED_HANDS is what the bars above are built from: update it with ROWS.
 const TARGET_HANDS = 10_000;
-const SCORED_HANDS = 2_000;
+const SCORED_HANDS = 3_000;
 const LIVE_RED = "#e66767";
 
 interface Live {
@@ -113,8 +114,8 @@ const H = 440;
 const M = { top: 30, right: 16, bottom: 58, left: 48 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
-const Y = [-80, 100];
-const Y_TICKS = [-75, -50, -25, 0, 25, 50, 75, 100];
+const Y = [-100, 100];
+const Y_TICKS = [-100, -75, -50, -25, 0, 25, 50, 75, 100];
 const BAND = PW / ROWS.length;
 const BAR = 38;
 
@@ -217,7 +218,7 @@ export function PokerBenchChart() {
       </div>
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.6rem" }}>
         <span style={{ fontSize: "0.78rem", color: INK.muted }}>
-          Big blinds won per 100 hands · 2,000 hands each · higher is better
+          Big blinds won per 100 hands · 3,000 hands each · higher is better
         </span>
         <span style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
           <button type="button" aria-pressed={showRange} onClick={() => setShowRange((s) => !s)} style={pill(showRange)}>
@@ -318,7 +319,7 @@ export function PokerBenchChart() {
             {fmt(h.bb)} bb/100 · 95% range {fmt(h.lo)} to {fmt(h.hi)}
             <br />
             <span style={{ color: INK.secondary }}>
-              Series 1 {fmt(h.s1)} · Series 2 {fmt(h.s2)}
+              Series 1 {fmt(h.s1)} · Series 2 {fmt(h.s2)} · Series 3 {fmt(h.s3)}
             </span>
           </div>
         )}
@@ -346,7 +347,7 @@ export function PokerBenchChart() {
           <table style={{ width: "100%", fontSize: "0.8rem", borderCollapse: "collapse", color: INK.secondary }}>
             <thead>
               <tr>
-                {["Model", "Maker", "bb/100", "95% range", "Series 1", "Series 2"].map((c) => (
+                {["Model", "Maker", "bb/100", "95% range", "Series 1", "Series 2", "Series 3"].map((c) => (
                   <th key={c} style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: `1px solid ${AXIS}`, color: INK.muted, fontWeight: 500 }}>
                     {c}
                   </th>
@@ -366,6 +367,7 @@ export function PokerBenchChart() {
                   </td>
                   <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s1)}</td>
                   <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s2)}</td>
+                  <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s3)}</td>
                 </tr>
               ))}
             </tbody>
