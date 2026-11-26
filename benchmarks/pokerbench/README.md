@@ -548,6 +548,17 @@ So the page only ever shows what the seats have already seen:
    (and `RELAY_DELAY`, default 120), then restart it between series. The table is
    `https://pokerbench.orcabot.com/tables/pokerbench`, the name the benchmark page embeds.
 
+**The scoreboard.** <!-- REVISION: pokerbench-relay-worker-v4-ratings --> The relay also
+uploads [`scoreboard.py`](pokerbench/scoreboard.py)'s scoreboard to `<RELAY_TARGET>/ratings`:
+bb/100 per model with its 95% range, each series' own bb/100 and the Bradley-Terry rating
+(without its range, which takes minutes to bootstrap), over every finished no-limit cash
+series game, the same numbers as `pokerbench ratings` over those games. It is worked out
+off the relay's loop whenever another game has finished and sent `RELAY_DELAY` later, so
+it never gets ahead of the table. Models only (no agents or seat names). The public host
+serves it at `/tables/<name>/ratings` (CORS-open, cached 30s); the benchmark page's chart
+and results table read it (`PokerBenchChart.tsx`), with series 1-3's numbers built in for
+when it can't be reached. A refused upload is tried again a minute later.
+
 Worker tests: `node --test benchmarks/pokerbench/relay-worker/test/*.test.mjs`.
 
 ## Tests

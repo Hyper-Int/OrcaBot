@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: pokerbench-live-v3-boundary-note
+// REVISION: pokerbench-live-v4-ratings-url
 // The PokerBench table, live but delayed, embedded in the benchmark page
 // (```chart pokerbench-live```). The table itself is served by the PokerBench relay
 // Worker (benchmarks/pokerbench/relay-worker) on its own host. A series deals the same
@@ -17,8 +17,11 @@ export const POKERBENCH_LIVE_URL =
   process.env.NEXT_PUBLIC_POKERBENCH_LIVE_URL || "https://pokerbench.orcabot.com/tables/pokerbench";
 /** The table's latest public snapshot (JSON, CORS-open), for the headline chart's progress. */
 export const POKERBENCH_STATE_URL = `${POKERBENCH_LIVE_URL}/state`;
+/** The scoreboard (bb/100 per model over every finished series game), for the headline
+ *  chart and the results table. REVISION: pokerbench-live-v4-ratings-url */
+export const POKERBENCH_RATINGS_URL = `${POKERBENCH_LIVE_URL}/ratings`;
 
-const MODULE_REVISION = "pokerbench-live-v3-boundary-note";
+const MODULE_REVISION = "pokerbench-live-v4-ratings-url";
 console.log(`[pokerbench-live] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export function PokerBenchLive() {

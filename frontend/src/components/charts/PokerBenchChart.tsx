@@ -3,8 +3,9 @@
 
 "use client";
 
-// REVISION: pokerbench-chart-v4-series-3
-// The PokerBench headline: bb/100 per model over every series so far, as a bar chart in the
+// REVISION: pokerbench-chart-v5-live-scoreboard
+// The PokerBench headline: bb/100 per model over every series so far, live from the relay's
+// scoreboard (pokerbench/scoreboard.py, updated after every finished game), as a bar chart in the
 // style of a model-release benchmark chart, with the 95% range as a thin whisker
 // (togglable) because most of the field overlaps zero and the chart must not hide it.
 //
@@ -15,18 +16,20 @@
 //   carried by the maker name under every bar).
 
 import * as React from "react";
-import { POKERBENCH_STATE_URL } from "./PokerBenchLive";
+import { POKERBENCH_RATINGS_URL, POKERBENCH_STATE_URL } from "./PokerBenchLive";
 
-const MODULE_REVISION = "pokerbench-chart-v4-series-3";
+const MODULE_REVISION = "pokerbench-chart-v5-live-scoreboard";
 if (typeof window !== "undefined") {
   console.log(`[pokerbench-chart] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
 
-type Maker = "Anthropic" | "OpenAI" | "Google";
+type Maker = "Anthropic" | "OpenAI" | "Google" | "Other";
 const MAKERS: { id: Maker; color: string }[] = [
   { id: "Anthropic", color: "#d95926" },
   { id: "OpenAI", color: "#199e70" },
   { id: "Google", color: "#3987e5" },
+  // A model from another maker (none yet): neutral, not a fourth hue; named under its bar.
+  { id: "Other", color: "#8a94a6" },
 ];
 const COLOR: Record<Maker, string> = Object.fromEntries(MAKERS.map((m) => [m.id, m.color])) as Record<Maker, string>;
 
@@ -37,31 +40,115 @@ interface Row {
   bb: number;
   lo: number;
   hi: number;
-  s1: number;
-  s2: number;
-  s3: number;
+  series: (number | null)[]; // each series' own bb/100, in the order played
   note?: string;
 }
 
-// Series 1-3 combined (30 games, 3,000 hands per model, duplicate-deal bootstrap).
-const ROWS: Row[] = [
-  { family: "GPT-6.2", name: "Astra", maker: "OpenAI", bb: 65.4, lo: 36.1, hi: 98.5, s1: 51.1, s2: 52.3, s3: 92.7 },
-  { family: "GPT-6.1", name: "Terra", maker: "OpenAI", bb: 14.7, lo: -4.2, hi: 34.3, s1: 35.4, s2: 26.2, s3: -17.4 },
-  { family: "Claude", name: "Fable 5.2", maker: "Anthropic", bb: 12.1, lo: -7.7, hi: 34.2, s1: 12.4, s2: 15.2, s3: 8.7 },
-  { family: "Gemini 4", name: "Hydrogen", maker: "Google", bb: 6.8, lo: -12.2, hi: 26.0, s1: -14.6, s2: 16.4, s3: 18.6 },
-  { family: "Gemini 4", name: "Neon", maker: "Google", bb: 5.0, lo: -15.9, hi: 25.2, s1: 13.1, s2: -14.0, s3: 15.9, note: "high effort" },
-  { family: "GPT-6.2", name: "Sol", maker: "OpenAI", bb: 0.5, lo: -21.4, hi: 22.3, s1: 8.0, s2: -1.0, s3: -5.6 },
-  { family: "Gemini 4", name: "Argon", maker: "Google", bb: -4.2, lo: -25.1, hi: 16.8, s1: -6.1, s2: -16.7, s3: 10.0 },
-  { family: "Claude", name: "Sonnet 5.5", maker: "Anthropic", bb: -21.4, lo: -55.1, hi: 10.5, s1: -42.5, s2: -17.4, s3: -4.3 },
-  { family: "Claude", name: "Opus 5.5", maker: "Anthropic", bb: -23.8, lo: -52.6, hi: 4.8, s1: -43.2, s2: -15.7, s3: -12.4 },
-  { family: "Claude", name: "Haiku 5.5", maker: "Anthropic", bb: -55.1, lo: -91.5, hi: -19.8, s1: -13.8, s2: -45.4, s3: -106.2 },
-];
+interface Board {
+  rows: Row[];
+  hands: number; // hands per model the bars are built from
+  series: { games: number; of: number }[];
+  asOf: string | null; // null: the built-in numbers below (the scoreboard couldn't be read)
+}
+
+// Display names. A model not listed still appears, under its own id.
+const MODELS: Record<string, { family: string; name: string; maker: Maker }> = {
+  "gpt-6.2-astra": { family: "GPT-6.2", name: "Astra", maker: "OpenAI" },
+  "gpt-6.2-sol": { family: "GPT-6.2", name: "Sol", maker: "OpenAI" },
+  "gpt-6.1-terra": { family: "GPT-6.1", name: "Terra", maker: "OpenAI" },
+  "claude-fable-5-2": { family: "Claude", name: "Fable 5.2", maker: "Anthropic" },
+  "claude-opus-5-5": { family: "Claude", name: "Opus 5.5", maker: "Anthropic" },
+  "claude-sonnet-5-5": { family: "Claude", name: "Sonnet 5.5", maker: "Anthropic" },
+  "claude-haiku-5-5": { family: "Claude", name: "Haiku 5.5", maker: "Anthropic" },
+  "Gemini 4 Hydrogen": { family: "Gemini 4", name: "Hydrogen", maker: "Google" },
+  "Gemini 4 Neon": { family: "Gemini 4", name: "Neon", maker: "Google" },
+  "Gemini 4 Argon": { family: "Gemini 4", name: "Argon", maker: "Google" },
+};
+
+function display(model: string): { family: string; name: string; maker: Maker } {
+  if (MODELS[model]) return MODELS[model];
+  const maker: Maker = /^claude/i.test(model) ? "Anthropic" : /^(gpt|o\d)/i.test(model) ? "OpenAI"
+    : /^gemini/i.test(model) ? "Google" : "Other";
+  return { family: "", name: model, maker };
+}
+
+// Series 1-3 combined (30 games, 3,000 hands per model, duplicate-deal bootstrap): what
+// the chart shows until the scoreboard loads, or if it can't be read.
+const FALLBACK: Board = {
+  hands: 3_000,
+  series: [{ games: 10, of: 10 }, { games: 10, of: 10 }, { games: 10, of: 10 }],
+  asOf: null,
+  rows: [
+    { family: "GPT-6.2", name: "Astra", maker: "OpenAI", bb: 65.4, lo: 36.1, hi: 98.5, series: [51.1, 52.3, 92.7] },
+    { family: "GPT-6.1", name: "Terra", maker: "OpenAI", bb: 14.7, lo: -4.2, hi: 34.3, series: [35.4, 26.2, -17.4] },
+    { family: "Claude", name: "Fable 5.2", maker: "Anthropic", bb: 12.1, lo: -7.7, hi: 34.2, series: [12.4, 15.2, 8.7] },
+    { family: "Gemini 4", name: "Hydrogen", maker: "Google", bb: 6.8, lo: -12.2, hi: 26.0, series: [-14.6, 16.4, 18.6] },
+    { family: "Gemini 4", name: "Neon", maker: "Google", bb: 5.0, lo: -15.9, hi: 25.2, series: [13.1, -14.0, 15.9], note: "high effort" },
+    { family: "GPT-6.2", name: "Sol", maker: "OpenAI", bb: 0.5, lo: -21.4, hi: 22.3, series: [8.0, -1.0, -5.6] },
+    { family: "Gemini 4", name: "Argon", maker: "Google", bb: -4.2, lo: -25.1, hi: 16.8, series: [-6.1, -16.7, 10.0] },
+    { family: "Claude", name: "Sonnet 5.5", maker: "Anthropic", bb: -21.4, lo: -55.1, hi: 10.5, series: [-42.5, -17.4, -4.3] },
+    { family: "Claude", name: "Opus 5.5", maker: "Anthropic", bb: -23.8, lo: -52.6, hi: 4.8, series: [-43.2, -15.7, -12.4] },
+    { family: "Claude", name: "Haiku 5.5", maker: "Anthropic", bb: -55.1, lo: -91.5, hi: -19.8, series: [-13.8, -45.4, -106.2] },
+  ],
+};
+
+interface ScoreboardModel {
+  model: string;
+  effort: string | null;
+  bb_per_100: number;
+  ci95: [number, number] | null;
+  series: (number | null)[];
+}
+
+/** The relay's scoreboard, every 2 minutes (it changes once a game, every couple of hours). */
+function useScoreboard(): Board {
+  const [board, setBoard] = React.useState<Board>(FALLBACK);
+  React.useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await fetch(POKERBENCH_RATINGS_URL, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const b = await res.json();
+        const models: ScoreboardModel[] = Array.isArray(b.models) ? b.models : [];
+        if (!models.length) throw new Error("empty scoreboard");
+        const rows: Row[] = models.map((m) => {
+          const d = display(m.model);
+          const bb = Number(m.bb_per_100) || 0;
+          return {
+            ...d, bb, lo: m.ci95?.[0] ?? bb, hi: m.ci95?.[1] ?? bb,
+            series: Array.isArray(m.series) ? m.series : [],
+            note: m.effort && m.effort !== "medium" ? `${m.effort} effort` : undefined,
+          };
+        }).sort((a, z) => z.bb - a.bb);
+        if (!stop) setBoard({ rows, hands: Number(b.hands) || 0, series: Array.isArray(b.series) ? b.series : [], asOf: b.as_of ?? null });
+      } catch {
+        // Keep whatever is showing: the last scoreboard, or the built-in numbers.
+      }
+    };
+    load();
+    const t = setInterval(load, 120_000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
+  return board;
+}
+
+/** "Series 4 (6 of 10 games)" for a series still being played. */
+function seriesLabel(board: Board, i: number): string {
+  const sr = board.series[i];
+  return sr && sr.games < sr.of ? `Series ${i + 1} (${sr.games} of ${sr.of} games)` : `Series ${i + 1}`;
+}
+
+/** Who didn't play at medium effort, for the legend line. */
+function effortNote(rows: Row[]): string {
+  const odd = rows.filter((r) => r.note);
+  return odd.length ? `All medium reasoning effort except ${odd.map((r) => `${r.family} ${r.name} (${r.note!.replace(" effort", "")})`).join(", ")}` : "All medium reasoning effort";
+}
 
 // Progress towards the benchmark's target. The relay counts every hand per model played
 // in finished series games (pokerbench/relay.py, results_progress); the game in play adds
-// its hands so far. SCORED_HANDS is what the bars above are built from: update it with ROWS.
+// its hands so far. The scoreboard's own hand count is what the bars are built from.
 const TARGET_HANDS = 10_000;
-const SCORED_HANDS = 3_000;
 const LIVE_RED = "#e66767";
 
 interface Live {
@@ -114,17 +201,27 @@ const H = 440;
 const M = { top: 30, right: 16, bottom: 58, left: 48 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
-const Y = [-100, 100];
-const Y_TICKS = [-100, -75, -50, -25, 0, 25, 50, 75, 100];
-const BAND = PW / ROWS.length;
 const BAR = 38;
 
-const sy = (v: number) => M.top + ((Y[1] - v) / (Y[1] - Y[0])) * PH;
-const cx = (i: number) => M.left + BAND * i + BAND / 2;
+/** The y scale: at least -100 to +100, widened in steps of 25 to fit every range. */
+function scale(rows: Row[]) {
+  const lo = Math.min(-100, Math.floor(Math.min(...rows.map((r) => r.lo)) / 25) * 25);
+  const hi = Math.max(100, Math.ceil(Math.max(...rows.map((r) => r.hi)) / 25) * 25);
+  const ticks: number[] = [];
+  for (let t = lo; t <= hi; t += 25) ticks.push(t);
+  const band = PW / Math.max(1, rows.length);
+  return {
+    ticks, band,
+    sy: (v: number) => M.top + ((hi - v) / (hi - lo)) * PH,
+    cx: (i: number) => M.left + band * i + band / 2,
+  };
+}
+
 const fmt = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(1)}`;
+const fmtOrDash = (v: number | null | undefined) => (typeof v === "number" ? fmt(v) : "–");
 
 /** A bar from the zero line to v, with the 4px rounding on its data end only. */
-function barPath(x: number, v: number): string {
+function barPath(sy: (v: number) => number, x: number, v: number): string {
   const y0 = sy(0), y1 = sy(v), r = Math.min(4, Math.abs(y1 - y0));
   const l = x - BAR / 2, rt = x + BAR / 2;
   if (v >= 0) {
@@ -146,10 +243,16 @@ export function PokerBenchChart() {
     fontSize: "0.8rem",
     cursor: "pointer",
   });
+  const board = useScoreboard();
+  const ROWS = board.rows;
+  const SCORED_HANDS = board.hands;
+  const { ticks: Y_TICKS, band: BAND, sy, cx } = scale(ROWS);
   const h = hover === null ? null : ROWS[hover];
   const live = useLiveTable();
   const done = Math.min(TARGET_HANDS, Math.max(SCORED_HANDS, live.played ?? SCORED_HANDS));
   const unscored = done - SCORED_HANDS;
+  const makers = MAKERS.filter((m) => ROWS.some((r) => r.maker === m.id));
+  const partial = board.series.findIndex((sr) => sr.games < sr.of);
   const pct = (n: number) => `${(100 * n) / TARGET_HANDS}%`;
 
   return (
@@ -218,7 +321,8 @@ export function PokerBenchChart() {
       </div>
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.6rem" }}>
         <span style={{ fontSize: "0.78rem", color: INK.muted }}>
-          Big blinds won per 100 hands · 3,000 hands each · higher is better
+          Big blinds won per 100 hands · {SCORED_HANDS.toLocaleString("en-US")} hands each
+          {partial >= 0 ? ` · includes ${board.series[partial].games} of ${board.series[partial].of} games of series ${partial + 1}` : ""} · higher is better
         </span>
         <span style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
           <button type="button" aria-pressed={showRange} onClick={() => setShowRange((s) => !s)} style={pill(showRange)}>
@@ -267,7 +371,7 @@ export function PokerBenchChart() {
                   onMouseLeave={() => setHover(null)}
                   style={{ cursor: "pointer" }}
                 />
-                <path d={barPath(x, r.bb)} fill={COLOR[r.maker]} style={{ pointerEvents: "none" }} />
+                <path d={barPath(sy, x, r.bb)} fill={COLOR[r.maker]} style={{ pointerEvents: "none" }} />
                 {showRange && (
                   <g stroke={INK.secondary} strokeWidth={1.25} style={{ pointerEvents: "none" }} opacity={0.5}>
                     <line x1={x} x2={x} y1={sy(r.lo)} y2={sy(r.hi)} />
@@ -296,7 +400,7 @@ export function PokerBenchChart() {
               position: "absolute",
               left: `${(cx(hover) / W) * 100}%`,
               top: `${(sy(Math.max(h.hi, 0)) / H) * 100}%`,
-              transform: `translate(${hover > 6 ? "-90%" : hover < 2 ? "-10%" : "-50%"}, -115%)`,
+              transform: `translate(${hover > ROWS.length - 4 ? "-90%" : hover < 2 ? "-10%" : "-50%"}, -115%)`,
               pointerEvents: "none",
               background: "#0b1a2e",
               border: `1px solid ${COLOR[h.maker]}`,
@@ -319,7 +423,7 @@ export function PokerBenchChart() {
             {fmt(h.bb)} bb/100 · 95% range {fmt(h.lo)} to {fmt(h.hi)}
             <br />
             <span style={{ color: INK.secondary }}>
-              Series 1 {fmt(h.s1)} · Series 2 {fmt(h.s2)} · Series 3 {fmt(h.s3)}
+              {board.series.map((_, i) => `${seriesLabel(board, i)} ${fmtOrDash(h.series[i])}`).join(" · ")}
             </span>
           </div>
         )}
@@ -327,7 +431,7 @@ export function PokerBenchChart() {
 
       {/* Legend: color = maker; the maker is also named under every bar. */}
       <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
-        {MAKERS.map((m) => (
+        {makers.map((m) => (
           <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: m.color }} />
             {m.id}
@@ -339,41 +443,55 @@ export function PokerBenchChart() {
             95% confidence range
           </span>
         )}
-        <span style={{ marginLeft: "auto" }}>All medium reasoning effort except Gemini 4 Neon (high)</span>
+        <span style={{ marginLeft: "auto" }}>{effortNote(ROWS)}</span>
       </div>
 
-      {showTable && (
-        <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
-          <table style={{ width: "100%", fontSize: "0.8rem", borderCollapse: "collapse", color: INK.secondary }}>
-            <thead>
-              <tr>
-                {["Model", "Maker", "bb/100", "95% range", "Series 1", "Series 2", "Series 3"].map((c) => (
-                  <th key={c} style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: `1px solid ${AXIS}`, color: INK.muted, fontWeight: 500 }}>
-                    {c}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {ROWS.map((r) => (
-                <tr key={r.name}>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>
-                    {r.family} {r.name}
-                  </td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>{r.maker}</td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.bb)}</td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>
-                    {fmt(r.lo)} to {fmt(r.hi)}
-                  </td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s1)}</td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s2)}</td>
-                  <td style={{ padding: "0.3rem 0.6rem" }}>{fmt(r.s3)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {showTable && <ResultsTable board={board} />}
     </figure>
   );
+}
+
+/** Each model's result and every series', as a table (the chart's "View data", and the
+ *  page's results table: ```chart pokerbench-table```). */
+function ResultsTable({ board }: { board: Board }) {
+  const cell: React.CSSProperties = { padding: "0.3rem 0.6rem", textAlign: "right", whiteSpace: "nowrap" };
+  const head: React.CSSProperties = { ...cell, borderBottom: `1px solid ${AXIS}`, color: INK.muted, fontWeight: 500 };
+  return (
+    <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
+      <table style={{ width: "100%", fontSize: "0.8rem", borderCollapse: "collapse", color: INK.secondary }}>
+        <thead>
+          <tr>
+            <th style={{ ...head, textAlign: "left" }}>Model</th>
+            <th style={head}>bb/100</th>
+            <th style={{ ...head, textAlign: "left" }}>95% range</th>
+            {board.series.map((_, i) => (
+              <th key={i} style={head}>{seriesLabel(board, i)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {board.rows.map((r) => (
+            <tr key={`${r.family} ${r.name}`}>
+              <td style={{ ...cell, textAlign: "left" }}>
+                {r.family} {r.name}{r.note ? ` (${r.note.replace(" effort", "")})` : ""}
+              </td>
+              <td style={{ ...cell, color: INK.primary, fontWeight: r.lo > 0 || r.hi < 0 ? 700 : 400 }}>{fmt(r.bb)}</td>
+              <td style={{ ...cell, textAlign: "left" }}>
+                {fmt(r.lo)} to {fmt(r.hi)}
+              </td>
+              {board.series.map((_, i) => (
+                <td key={i} style={cell}>{fmtOrDash(r.series[i])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The page's results table, live like the chart. */
+export function PokerBenchTable() {
+  const board = useScoreboard();
+  return <ResultsTable board={board} />;
 }
