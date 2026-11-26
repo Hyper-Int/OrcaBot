@@ -1,6 +1,7 @@
+// REVISION: terminal-block-tests-v2-liveness-before-restart
 import * as React from "react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, waitFor, act, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactFlowProvider } from "@xyflow/react";
 import { TerminalBlock } from "./TerminalBlock";
@@ -29,13 +30,30 @@ vi.mock("@/components/terminal", async () => {
   };
 });
 
+const livenessMock = vi.fn();
+vi.mock("@/lib/api/cloudflare/session-liveness", () => ({
+  getSessionLiveness: (...args: unknown[]) => livenessMock(...args),
+}));
+
+const stopSessionMock = vi.fn();
+const createSessionMock = vi.fn();
+vi.mock("@/lib/api/cloudflare", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/cloudflare")>("@/lib/api/cloudflare");
+  return {
+    ...actual,
+    stopSession: (...args: unknown[]) => stopSessionMock(...args),
+    createSession: (...args: unknown[]) => createSessionMock(...args),
+    applySessionSecrets: vi.fn(async () => undefined),
+  };
+});
+
 vi.mock("./BlockWrapper", () => ({
   BlockWrapper: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="block-wrapper">{children}</div>
   ),
 }));
 
-function renderTerminal(sessionOwnerId: string, viewerId: string) {
+function renderTerminal(sessionOwnerId: string, viewerId: string, connectionState = "connected", reconnect = vi.fn()) {
   const queryClient = new QueryClient();
   useAuthStore.setState({
     user: {
@@ -50,7 +68,7 @@ function renderTerminal(sessionOwnerId: string, viewerId: string) {
 
   useTerminalMock.mockReturnValue([
     {
-      connectionState: "connected",
+      connectionState,
       turnTaking: {
         controller: sessionOwnerId,
         controllerName: "Owner",
@@ -71,7 +89,7 @@ function renderTerminal(sessionOwnerId: string, viewerId: string) {
       requestControl: vi.fn(),
       grantControl: vi.fn(),
       revokeControl: vi.fn(),
-      reconnect: vi.fn(),
+      reconnect,
     },
   ]);
 
@@ -121,6 +139,7 @@ describe("TerminalBlock owner controls", () => {
   beforeEach(() => {
     useTerminalMock.mockReset();
   });
+  afterEach(() => cleanup());
 
   it("does not show view-only messaging for the owner", () => {
     renderTerminal("owner-1", "owner-1");
@@ -130,5 +149,61 @@ describe("TerminalBlock owner controls", () => {
   it("shows view-only messaging for non-owners", () => {
     renderTerminal("owner-1", "viewer-1");
     expect(screen.getAllByText("View-only session").length).toBeGreaterThan(0);
+  });
+});
+
+// A dropped connection isn't a dead terminal: the page asks the sandbox before replacing
+// it (2026-11-24: a backgrounded Safari tab restarted healthy PokerBench terminals).
+describe("TerminalBlock recovery after a lost connection", () => {
+  let hidden = false;
+  beforeEach(() => {
+    useTerminalMock.mockReset();
+    livenessMock.mockReset();
+    stopSessionMock.mockReset();
+    createSessionMock.mockReset();
+    createSessionMock.mockReturnValue(new Promise(() => {}));
+    hidden = false;
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => (hidden ? "hidden" : "visible"));
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("reconnects to a terminal that is still running, without restarting it", async () => {
+    livenessMock.mockResolvedValue(true);
+    const reconnect = vi.fn();
+    renderTerminal("owner-1", "owner-1", "failed", reconnect);
+    await waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(livenessMock).toHaveBeenCalledWith("session-1");
+    expect(stopSessionMock).not.toHaveBeenCalled();
+    expect(createSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh session when the terminal's process is gone", async () => {
+    livenessMock.mockResolvedValue(false);
+    const reconnect = vi.fn();
+    renderTerminal("owner-1", "owner-1", "failed", reconnect);
+    await waitFor(() => expect(stopSessionMock).toHaveBeenCalledWith("session-1"), { timeout: 5000 });
+    await waitFor(() => expect(createSessionMock).toHaveBeenCalled());
+    expect(reconnect).not.toHaveBeenCalled();
+  });
+
+  it("never restarts when it can't tell", async () => {
+    livenessMock.mockResolvedValue(null);
+    const reconnect = vi.fn();
+    renderTerminal("owner-1", "owner-1", "failed", reconnect);
+    await waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(stopSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("decides nothing while the tab is hidden", async () => {
+    hidden = true;
+    livenessMock.mockResolvedValue(true);
+    const reconnect = vi.fn();
+    renderTerminal("owner-1", "owner-1", "failed", reconnect);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(livenessMock).not.toHaveBeenCalled();
+    hidden = false;
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(stopSessionMock).not.toHaveBeenCalled();
   });
 });
