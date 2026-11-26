@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: pokerbench-relay-worker-v1
+// REVISION: pokerbench-relay-worker-v4-ratings
 // node --test benchmarks/pokerbench/relay-worker/test/*.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -87,4 +87,36 @@ test("the table keeps its snapshot across a restart", async () => {
   await new Table({ storage }).fetch(new Request("https://t/latest", { method: "PUT", body: SNAP }));
   const again = await new Table({ storage }).fetch(new Request("https://t/latest"));
   assert.equal(await again.text(), SNAP);
+});
+
+// REVISION: pokerbench-relay-worker-v4-ratings
+const BOARD = JSON.stringify({ games: 30, hands: 3000, series: [{ games: 10, of: 10 }], models: [{ model: "m", bb_per_100: 1 }] });
+
+test("the scoreboard: uploaded with the key, served read-only on the public host", async () => {
+  const env = makeEnv();
+  assert.equal((await call(env, PUB, "/tables/pb/ratings")).status, 404);  // none yet
+  assert.equal((await put(env, BOARD, "Bearer nope", UP, "/tables/pb/ratings")).status, 401);
+  assert.equal((await put(env, SNAP, `Bearer ${KEY}`, UP, "/tables/pb/ratings")).status, 400);  // not a scoreboard
+  assert.equal((await put(env, BOARD, `Bearer ${KEY}`, PUB, "/tables/pb/ratings")).status, 405);  // public takes nothing
+  assert.equal((await put(env, BOARD, `Bearer ${KEY}`, UP, "/tables/pb/ratings")).status, 204);
+  const got = await call(env, PUB, "/tables/pb/ratings");
+  assert.equal(got.status, 200);
+  assert.equal(await got.text(), BOARD);
+  assert.equal(got.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.match(got.headers.get("Cache-Control"), /max-age=30/);
+  assert.equal((await call(env, UP, "/tables/pb/ratings")).status, 404);  // the upload host serves nothing
+  // The table's snapshot is separate: the scoreboard didn't become it, and vice versa.
+  assert.equal((await call(env, PUB, "/tables/pb/state")).status, 404);
+  assert.equal((await put(env)).status, 204);
+  assert.equal(await (await call(env, PUB, "/tables/pb/ratings")).text(), BOARD);
+  assert.equal(await (await call(env, PUB, "/tables/pb/state")).text(), SNAP);
+});
+
+test("the table keeps its scoreboard across a restart", async () => {
+  const m = new Map();
+  const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) };
+  await new Table({ storage }).fetch(new Request("https://t/ratings", { method: "PUT", body: BOARD }));
+  const again = new Table({ storage });
+  assert.equal(await (await again.fetch(new Request("https://t/ratings"))).text(), BOARD);
+  assert.equal((await again.fetch(new Request("https://t/latest"))).status, 404);
 });

@@ -29,22 +29,17 @@ pokerbench-live
 
 ## Results
 
-Three series of ten games, 3,000 hands per model. **bb/100** is big blinds won per hundred
-hands: the standard poker win rate. The range is a 95% confidence interval. Every model
-ran at medium reasoning effort except Gemini 4 Neon, at high.
+Series of ten games each, every model playing every deal from every seat. **bb/100** is
+big blinds won per hundred hands: the standard poker win rate. The range is a 95%
+confidence interval. Every model ran at medium reasoning effort except Gemini 4 Neon, at
+high. The chart and this table update after every game; a series still being played is
+included with the games it has finished, and its column says how many.
 
-| Model | bb/100 | 95% range | Series 1 | Series 2 | Series 3 |
-|---|---:|---|---:|---:|---:|
-| GPT-6.2 Astra | **+65.4** | +36.1 to +98.5 | +51.1 | +52.3 | +92.7 |
-| GPT-6.1 Terra | +14.7 | −4.2 to +34.3 | +35.4 | +26.2 | −17.4 |
-| Claude Fable 5.2 | +12.1 | −7.7 to +34.2 | +12.4 | +15.2 | +8.7 |
-| Gemini 4 Hydrogen | +6.8 | −12.2 to +26.0 | −14.6 | +16.4 | +18.6 |
-| Gemini 4 Neon (high) | +5.0 | −15.9 to +25.2 | +13.1 | −14.0 | +15.9 |
-| GPT-6.2 Sol | +0.5 | −21.4 to +22.3 | +8.0 | −1.0 | −5.6 |
-| Gemini 4 Argon | −4.2 | −25.1 to +16.8 | −6.1 | −16.7 | +10.0 |
-| Claude Sonnet 5.5 | −21.4 | −55.1 to +10.5 | −42.5 | −17.4 | −4.3 |
-| Claude Opus 5.5 | −23.8 | −52.6 to +4.8 | −43.2 | −15.7 | −12.4 |
-| Claude Haiku 5.5 | **−55.1** | −91.5 to −19.8 | −13.8 | −45.4 | −106.2 |
+```chart
+pokerbench-table
+```
+
+After three series (3,000 hands per model):
 
 **One model is clearly winning and one clearly losing.** GPT-6.2 Astra is the only model
 whose whole range is above zero, and it has had the best result in every series (+51.1,
@@ -254,7 +249,7 @@ precise by kind) and, for the 87 changed moves, read one by one.
 
 ### Limitations
 
-- 3,000 hands per model is enough to separate the extremes, not the middle. A ±10 bb/100
+- Three series, 3,000 hands per model, separate the extremes, not the middle. A ±10 bb/100
   range would take four to ten times as many hands.
 - Each result is a model playing through its maker's agent, at one reasoning effort. The
   same model through a different agent, or at a different effort, may play differently.

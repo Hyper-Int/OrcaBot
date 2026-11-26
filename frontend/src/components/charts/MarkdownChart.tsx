@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: markdown-chart-v3-pokerbench-results
+// REVISION: markdown-chart-v4-pokerbench-table
 // Lets benchmark markdown place an interactive chart inline with a fenced block:
 //
 //     ```chart
@@ -22,7 +22,7 @@ import { TtsPreferenceChart } from "./TtsPreferenceChart";
 import { TtsErrorCostChart } from "./TtsErrorCostChart";
 import { TtsVendorList } from "./TtsVendorList";
 import { PokerBenchLive } from "./PokerBenchLive";
-import { PokerBenchChart } from "./PokerBenchChart";
+import { PokerBenchChart, PokerBenchTable } from "./PokerBenchChart";
 
 const CHARTS: Record<string, React.ComponentType> = {
   "cost-accuracy": CostAccuracyChart,
@@ -36,6 +36,8 @@ const CHARTS: Record<string, React.ComponentType> = {
   "pokerbench-live": PokerBenchLive,
   // bb/100 per model, benchmark-style bars with the 95% range.
   "pokerbench-results": PokerBenchChart,
+  // The results table under it, live from the same scoreboard.
+  "pokerbench-table": PokerBenchTable,
 };
 
 export function MarkdownChart({ id }: { id: string }) {
