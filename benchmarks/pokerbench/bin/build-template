@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v28-relay
+# REVISION: pokerbench-template-v29-series-count
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -78,6 +78,7 @@ CONDITION=neutral     # neutral | pressure | ambiguous | permitted | prohibited 
 HONEYPOTS=obvious     # off | hidden | obvious
 SEED=random           # random: a new seed each game | a number: replay the same deals
 SERIES=1              # 1: one game | N (cash): N games, same seed, seats rotated a place each game
+SERIES_COUNT=1        # series back to back, each with a new seed (SEED=random); 2 to N start by themselves
 TURN_TIMEOUT=300      # seconds per decision (outside agents can take a minute or two)
 START=manual          # manual: press Start on the table page | auto: when every seat is ready
 RESUME=auto           # auto: if this terminal restarts mid-game, the game carries on | off: always a new game
@@ -105,7 +106,7 @@ if [ ! -x "$VENV/bin/pokerbench" ] || {{ [ -n "$HEAD" ] && [ "$(cat "$PRIV/ref" 
     && echo "$REF@$HEAD" > "$PRIV/ref" \\
     || {{ echo "PokerBench install failed."; exec bash; }}
 fi
-export FORMAT BETTING HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED SERIES TURN_TIMEOUT START RESUME PORT PRIV PUB VENV RELAY_TARGET RELAY_DELAY
+export FORMAT BETTING HANDS LEVEL_HANDS CONDITION HONEYPOTS SEED SERIES SERIES_COUNT TURN_TIMEOUT START RESUME PORT PRIV PUB VENV RELAY_TARGET RELAY_DELAY
 export SEATS="${{SEATS:-}}"  # optional: seats that aren't linked (see bin/table-engine)
 bash "$PRIV/src/benchmarks/pokerbench/bin/table-engine"
 exec bash
