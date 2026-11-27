@@ -83,6 +83,16 @@ class ResumeTests(unittest.TestCase):
         replay = [e for e in events if e["type"] == "hand_started" and e["hand"] == 3]
         self.assertEqual([e.get("replay_deck") for e in replay], [None, 1])
 
+    def test_what_each_seat_reported_survives_a_restart(self):
+        # A Codex seat reports once a game: a restart that forgot it named it "unknown".
+        # REVISION: pokerbench-engine-v24-agent-info-in-checkpoint
+        m = started(self.run, deals=3, seed=2, seats=("a", "b"))
+        m.report_agent_info("a", {"models": {"gpt-6.2-astra": 1}, "effort": "medium", "unit": "turns"})
+        finish_hand(m)
+        r = self.restart()
+        self.assertEqual(r.agent_info, {"a": {"models": {"gpt-6.2-astra": 1}, "effort": "medium", "unit": "turns"}})
+        self.assertEqual(json.loads((self.run / "run.json").read_text())["agent_info"], r.agent_info)
+
     def test_a_cash_game_replays_the_same_deal(self):
         m = started(self.run, deals=3, seed=2, seats=("a", "b"))
         finish_hand(m)

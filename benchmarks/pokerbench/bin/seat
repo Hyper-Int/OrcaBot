@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v15-agent-info-per-game
+# REVISION: pokerbench-seat-v17-archive-tmp
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -37,7 +37,7 @@
 # bots wait for it to come back.
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v15-agent-info-per-game
+REVISION=pokerbench-seat-v17-archive-tmp
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -94,7 +94,7 @@ report() {  # state message: why this seat can't play yet (the table page shows 
 # "Changed" is per game: a Codex game is one long turn, so every game reads the same
 # ({"gpt-6.2-astra": 1} turns) and, compared across games, no game after a helper's first
 # was ever reported (series of 2026-11-23: every Codex seat's effort "unknown").
-# REVISION: pokerbench-seat-v15-agent-info-per-game
+# REVISION: pokerbench-seat-v17-archive-tmp
 agent_reported=; agent_at=0
 report_agent() {
   local now since info; now=$(date +%s)
@@ -323,8 +323,9 @@ print(json.dumps(p))')
 # (/workspace/.pokerbench/seats/<seat>, 0700): the helper and the agent run as that user
 # with umask 077. The engine binds the seat to that user when it checks in, so the report
 # shows seat isolation enforced. Each start:
-#   - moves the seat's earlier conversations/notes into a root-only archive, so the agent
-#     starts with no memory of earlier games (a series replays the same deals);
+#   - moves the seat's earlier conversations/notes, and what its user left in /tmp, into a
+#     root-only archive, so the agent starts with no memory of earlier games (a series
+#     replays the same deals);
 #   - syncs the login with the dashboard's shared home: credentials newer-wins both ways
 #     (a seat that refreshed its token hands it back), other setup state copied in once.
 # Not root, no setpriv, or POKER_SEAT_USERS=off: helper and agent run as this user, as before.
@@ -335,6 +336,11 @@ if [ "$MODE" = agent ]; then
   case "$VENDOR" in anthropic|openai|google|antigravity) ;; *)
     echo "seat.sh agent: vendor must be anthropic, openai, google or antigravity"; exec bash ;;
   esac
+  # Claude Code's auto-updater downloads each new release (~400 MB) into every seat's home
+  # on /workspace, and seats never run it (they run the image's claude). On 2026-11-26 the
+  # four Claude seats' copies (1.2 GB each) filled /workspace in game 1 of series 4 and the
+  # Gemini seats' agents crashed at their next write. REVISION: pokerbench-seat-v16-no-claude-autoupdate
+  [ "$VENDOR" = anthropic ] && export DISABLE_AUTOUPDATER=1
   if [ $# -eq 0 ] || ! command -v "$1" >/dev/null 2>&1; then
     if [ "$VENDOR" = antigravity ]; then
       echo "Antigravity CLI (agy) is not installed on this VM. In any terminal run:"
@@ -400,11 +406,23 @@ PY
     google) HIST=".gemini/tmp .gemini/history" ;;
     antigravity) HIST=".gemini/antigravity-cli/conversations .gemini/antigravity-cli/brain .gemini/antigravity-cli/annotations .gemini/antigravity-cli/implicit .gemini/antigravity-cli/conversation_summaries.db .gemini/antigravity-cli/history.jsonl .gemini/antigravity-cli/jetbox_summaries_proto.pb .gemini/antigravity-cli/log" ;;
   esac
+  # And whatever the seat's user left in the shared temp folders, which outlive a game: Claude
+  # Code keeps background commands' output in /tmp/claude-<uid> (a `poker wait` there holds
+  # that game's cards), and an agent's own scripts or notes may sit in /tmp. Everything there
+  # the seat's user owns, at the top level, except this helper's own status log (no cards; held
+  # open while it runs). REVISION: pokerbench-seat-v17-archive-tmp
+  TMPS="${POKER_SEAT_TMPS:-/tmp /var/tmp /dev/shm}"
+  TMP_OWNER="${POKER_TEST_TMP_UID:-$U}"  # tests (not root) can't own files as the seat's uid
   archive() {
-    local A p
+    local A p t
     A="$ROOT/archive/$SEAT/$(date -u +%Y%m%dT%H%M%SZ)-${ORCABOT_PTY_ID:-local}"
     for p in $HIST; do
       if [ -e "$H/$p" ]; then mkdir -p "$A/$(dirname "$p")" && mv "$H/$p" "$A/$p"; fi
+    done
+    for t in $TMPS; do
+      [ -d "$t" ] || continue
+      find "$t" -mindepth 1 -maxdepth 1 -user "$TMP_OWNER" ! -name 'pokerbench-seat-*.log' -print0 2>/dev/null |
+        while IFS= read -r -d '' p; do mkdir -p "$A/tmp$t" && mv "$p" "$A/tmp$t/"; done
     done
   }
 

@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v20-public -->
+<!-- REVISION: pokerbench-spectator-v21-replay -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -187,6 +187,7 @@
     <span class="spacer"></span>
     <span id="isolation" class="pill" hidden></span>
     <span id="delay" class="pill" hidden></span>
+    <span id="replay" class="pill warn" hidden></span>
     <button id="control" class="ctl" hidden></button>
   </header>
 
@@ -278,8 +279,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v20-public
-console.log(`[spectator] REVISION: pokerbench-spectator-v20-public loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v21-replay
+console.log(`[spectator] REVISION: pokerbench-spectator-v21-replay loaded at ${new Date().toISOString()}`);
 // Public mode: the relay Worker serves this page with window.POKERBENCH_PUBLIC = {state: URL}.
 // It draws a delayed copy (relay.py) and has no controls: no Start, Pause, End, Settings
 // or player choice, and nothing is ever sent to an engine.
@@ -293,6 +294,7 @@ const signed = (n) => `<span class="${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n >
 
 let state = null;
 let shownHand = null;       // the last finished hand number we have displayed
+let wasReplaying = false;   // the last snapshot was a replay (public mode)
 let showdown = null;        // {hand, until}: a finished hand held on the table for a moment
 let controlError = "";
 let busy = false;           // a Start / Pause / Resume / End request is in flight
@@ -347,7 +349,18 @@ function render() {
   el("blinds").hidden = !blinds;
   if (blinds) el("blinds").textContent = `blinds ${num(blinds[0])}/${num(blinds[1])}` +
     (s.tournament ? ` · level ${s.tournament.level}` : "");
-  const behind = PUBLIC && s.relay ? Math.round(s.relay.delay_s || 0) : 0;
+  // The game has stopped moving and the relay is replaying earlier play (relay-worker: Table).
+  // REVISION: pokerbench-spectator-v21-replay
+  const replay = PUBLIC && s.relay ? s.relay.replay : null;
+  el("replay").hidden = !replay;
+  if (replay) {
+    const at = (iso) => new Date(iso).toISOString().slice(11, 16);
+    el("replay").textContent = `replay${replay.source === "this game" ? "" : " of the last series"} · ` +
+      `live game stopped at ${at(replay.stalled_since)} UTC`;
+    el("replay").title = `The live game hasn't moved since ${replay.stalled_since}. Until it does, this is a replay of ` +
+      `${replay.source === "this game" ? "this game's" : "the last series'"} earlier hands (this frame: ${replay.of}).`;
+  }
+  const behind = PUBLIC && s.relay && !replay ? Math.round(s.relay.delay_s || 0) : 0;
   el("delay").hidden = !behind;
   if (behind) {
     el("delay").textContent = behind >= 120 ? `${Math.round(behind / 60)} min behind` : `${behind}s behind`;
@@ -839,6 +852,10 @@ async function poll(once) {
       state = await res.json();
       // Settings: kept fresh in the lobby (someone else may change them), read once more after the start.
       if (state.status === "waiting_for_players" || !settingsAsked || (settings && settings.editable)) await loadSettings();
+      // Into or out of a replay (or round its loop), hands jump: no showdown for the jump.
+      const replaying = Boolean(state.relay && state.relay.replay);
+      if (replaying !== wasReplaying) shownHand = null;
+      wasReplaying = replaying;
       const last = state.last_hand;
       if (last && shownHand !== null && last.hand !== shownHand && state.status !== "waiting_for_players") {
         showdown = { hand: last, until: Date.now() + SHOWDOWN_MS };
