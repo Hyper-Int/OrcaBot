@@ -559,6 +559,27 @@ serves it at `/tables/<name>/ratings` (CORS-open, cached 30s); the benchmark pag
 and results table read it (`PokerBenchChart.tsx`), with series 1-3's numbers built in for
 when it can't be reached. A refused upload is tried again a minute later.
 
+**When the game gets stuck.** <!-- REVISION: pokerbench-relay-worker-v5-replay --> If
+the game stops moving for 6 minutes, the page starts replaying it. Moving means a new
+action, street or hand, or a seat coming back in the lobby. 6 minutes is longer than a
+turn can last (`TURN_TIMEOUT`, 300s, then a fold), so a slow turn never starts a replay.
+Typical causes are a seat that's logged out,
+an engine that's paused or restarting, or a relay or VM that's gone. The replay loops the
+game's last 20 minutes and is labelled in red ("replay · live game stopped at HH:MM UTC").
+The page goes back to the live game as soon as it moves again.
+
+The Worker decides when to replay (the `Table` Durable Object, which keeps the last 20
+minutes of play), so it keeps working when nothing is being uploaded.
+
+The replay keeps to the rule above: it never shows another game of the series. It replays
+only hands of the current game, which every seat has already seen. If the game is stuck
+in its lobby before its first hand, it replays the end of the previous series instead,
+which was dealt from a different seed. The very first series has no previous series, so
+a stuck lobby there shows the lobby as before. A finished table is never replayed.
+
+While replaying, the benchmark page's progress line still shows the live game's numbers
+(`progress`, `series`, `hands_played`).
+
 Worker tests: `node --test benchmarks/pokerbench/relay-worker/test/*.test.mjs`.
 
 ## Tests

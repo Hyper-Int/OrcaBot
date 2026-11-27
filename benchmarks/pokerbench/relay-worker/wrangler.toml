@@ -1,4 +1,4 @@
-# REVISION: pokerbench-relay-worker-v3-upload-host
+# REVISION: pokerbench-relay-worker-v5-replay
 # The public side of a PokerBench table (README "Live page"). Before deploying, set the two
 # hosts below, then: wrangler secret put RELAY_KEY -c benchmarks/pokerbench/relay-worker/wrangler.toml
 name = "pokerbench-relay"
