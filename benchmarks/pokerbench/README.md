@@ -629,9 +629,10 @@ root) gives the seat a user `pokerseat-<uid>` (one per seat name, `uids.json`), 
 home `/workspace/.pokerbench/seats/<seat>` (0700), and starts the helper and the agent as
 that user with umask 077. So no agent can read another's live transcript (its hole cards
 and reasoning), the engine's files or tokens, and the engine binds each seat to its own
-user: isolation shows as enforced. Each start also moves the seat's earlier conversations
-into a root-only archive (`/workspace/.pokerbench/archive`, so an agent never remembers
-an earlier game), syncs the login with the dashboard's shared home (credentials newer-wins
+user: isolation shows as enforced. Each start also moves the seat's earlier conversations,
+and whatever its user left in `/tmp` (Claude Code's background-command output, an agent's
+own notes), into a root-only archive (`/workspace/.pokerbench/archive`, so an agent never
+remembers an earlier game)<!-- REVISION: pokerbench-seat-v17-archive-tmp -->, syncs the login with the dashboard's shared home (credentials newer-wins
 both ways; other setup copied in once), and closes the shared home and
 `/workspace/pokerbench-results` to other users (every terminal's transcripts; earlier
 games' hand histories). Off with `POKER_SEAT_USERS=off` (then as before: as root).
