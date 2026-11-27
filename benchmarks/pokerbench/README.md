@@ -576,6 +576,9 @@ only hands of the current game, which every seat has already seen. If the game i
 in its lobby before its first hand, it replays the end of the previous series instead,
 which was dealt from a different seed. The very first series has no previous series, so
 a stuck lobby there shows the lobby as before. A finished table is never replayed.
+A game that starts again deals hands it has dealt before, so the Worker drops what it
+recorded of that game. That covers a game rewound to its start, rolled back, or resumed
+after an engine restart. <!-- REVISION: pokerbench-relay-worker-v6-restart -->
 
 While replaying, the benchmark page's progress line still shows the live game's numbers
 (`progress`, `series`, `hands_played`).

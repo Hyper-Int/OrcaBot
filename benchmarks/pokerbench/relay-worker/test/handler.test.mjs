@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: pokerbench-relay-worker-v5-replay
+// REVISION: pokerbench-relay-worker-v6-restart
 // node --test benchmarks/pokerbench/relay-worker/test/*.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -241,4 +241,29 @@ test("the replay survives a restart, and what is kept stays about 20 minutes", a
   again.now = c.t.now;
   const r = JSON.parse(await (await again.fetch(new Request("https://t/latest"))).text());
   assert.equal(r.relay.replay.source, "this game");
+});
+
+// REVISION: pokerbench-relay-worker-v6-restart
+test("a game that starts again is never replayed from before: its hands come round again", async () => {
+  const c = clockTable();
+  await c.play(25, { sid: "s4", game: 9 });                 // the end of the last series
+  await c.play(10, { sid: "s5", game: 0 });                 // series 5, game 1: hands 1-10...
+  // ...then rewound to its start: the same seed deals hands 1-10 again. Its lobby comes back.
+  const lobby = { ...frame({ sid: "s5", game: 0 }), status: "waiting_for_players", joined: [] };
+  await c.up(lobby);
+  assert.equal(c.t.hist.filter((h) => h.g === "s5#0").length, 0, "what was recorded of the game is gone");
+  assert.equal((await c.storage.list({ prefix: "h:" })).size, c.t.hist.length, "from storage too");
+  c.wait(STALL_S * 1000 + 1000);
+  const r = await c.get();
+  assert.equal(r.relay.replay.source, "the last series", "a stuck lobby replays series 4, not game 1's first try");
+  assert.equal(JSON.parse(c.t.reel[0].text).series.id, "s4");
+
+  // Played again, then rolled back (fewer hands played): the frames past it go too.
+  await c.play(12, { sid: "s5", game: 0 });
+  await c.up(frame({ sid: "s5", game: 0, hand: 9 }));       // hands_played 8 < 11 recorded
+  assert.ok(c.t.hist.every((h) => h.g !== "s5#0" || JSON.parse(h.text).hand === 9));
+  // And an engine restart mid-game (resuming: the hand in progress is dealt again).
+  await c.play(5, { sid: "s5", game: 0, from: 9 });
+  await c.up(frame({ sid: "s5", game: 0, hand: 13, extra: { resuming: { next_hand: 13 } } }));
+  assert.equal(c.t.hist.filter((h) => h.g === "s5#0").length, 1, "only the resuming frame itself");
 });

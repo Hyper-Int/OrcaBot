@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: pokerbench-relay-worker-v5-replay
+// REVISION: pokerbench-relay-worker-v6-restart
 //
 // The public side of a PokerBench table (pokerbench/relay.py uploads a delayed copy).
 // Two hosts, so the upload host serves nothing and the public one takes nothing:
@@ -17,7 +17,7 @@
 //                GET /robots.txt           Disallow: / (and noindex on every response)
 // Fail-closed: no RELAY_KEY, no hosts or the same host twice -> nothing is served.
 
-export const WORKER_REVISION = "pokerbench-relay-worker-v5-replay";
+export const WORKER_REVISION = "pokerbench-relay-worker-v6-restart";
 export const MAX_BODY = 200_000;
 const NAME = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const NOINDEX = { "X-Robots-Tag": "noindex, nofollow, noarchive" };
@@ -123,6 +123,7 @@ export function progressKey(snap) {
 const gameKey = (snap) => (snap.series && snap.series.id ? `${snap.series.id}#${snap.series.game}` : null);
 const span = (reel) => (reel.length ? reel[reel.length - 1].t - reel[0].t : 0);
 const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, "Z");
+const played = (h) => h.hp ?? JSON.parse(h.text).hands_played ?? 0;  // v5 rows have no hp
 // Durable Object storage takes at most 128 keys a call.
 async function deleteKeys(st, keys) { for (let i = 0; i < keys.length; i += 128) await st.delete(keys.slice(i, i + 128)); }
 async function putRows(st, prefix, rows) {
@@ -185,11 +186,26 @@ export class Table {
       await putRows(st, "r:", reel);
       this.reel = reel;
     }
+    // A game that starts again deals hands it has dealt before: rewound to its start (its
+    // lobby again), rolled back (fewer hands played) or carried on after the engine restarted
+    // (resuming: the hand in progress is dealt again). What was recorded of it could show
+    // those hands' cards before they're dealt, so it goes. REVISION: pokerbench-relay-worker-v6-restart
+    if (g) {
+      const hp = typeof snap.hands_played === "number" ? snap.hands_played : null;
+      const again = snap.status === "waiting_for_players" || Boolean(snap.resuming) ||
+        (hp !== null && this.hist.some((h) => h.g === g && played(h) > hp));
+      const gone = again ? this.hist.filter((h) => h.g === g) : [];
+      if (gone.length) {
+        this.hist = this.hist.filter((h) => h.g !== g);
+        await deleteKeys(st, gone.map((h) => `h:${h.t}`));
+      }
+    }
     // Only play goes on the reel (not the lobby), and nothing once the game has stopped moving.
     if (!g || snap.status !== "running") return;
-    const moved = !last || last.pk !== pk;
-    if (!moved && (now - last.t < KEEP_EVERY_S * 1000 || now - this.moved.at >= STALL_S * 1000)) return;
-    const h = { t: now, g, sid, pk, text };
+    const prev = this.hist[this.hist.length - 1];
+    const moved = !prev || prev.pk !== pk;
+    if (!moved && (now - prev.t < KEEP_EVERY_S * 1000 || now - this.moved.at >= STALL_S * 1000)) return;
+    const h = { t: now, g, sid, pk, hp: snap.hands_played ?? null, text };
     this.hist.push(h);
     await st.put(`h:${now}`, JSON.stringify(h));
     const cutoff = this.moved.at - (REPLAY_S + 60) * 1000;
