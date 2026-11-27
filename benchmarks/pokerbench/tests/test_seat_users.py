@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v16-no-claude-autoupdate
+# REVISION: pokerbench-seat-v17-archive-tmp
 """An agent seat runs as its own OS user with a private home (seat.sh agent), so agents
 can't read each other's live transcripts (hole cards, reasoning) or the engine's files:
 every Orcabot terminal is root with one shared HOME. Each start archives the seat's
@@ -43,10 +43,13 @@ class SeatUserTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def launch(self, vendor, *argv, pty="pty-1"):
+    def launch(self, vendor, *argv, pty="pty-1", seat_tmp=None, tmp_owner=None):
         env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.shared), "POKER_PUB": str(self.pub),
                "POKER_SEATS_ROOT": str(self.root), "POKER_PASSWD_DIR": str(self.etc), "POKER_TEST_ROOT": "1",
-               "POKER_TEST_CHOWN": "true", "POKER_TEST_ONCE": "1", "ORCABOT_PTY_ID": pty}
+               "POKER_TEST_CHOWN": "true", "POKER_TEST_ONCE": "1", "ORCABOT_PTY_ID": pty,
+               # The shared temp folders: a test's own (never the real /tmp), owned by this user.
+               "POKER_SEAT_TMPS": str(seat_tmp or Path(self.tmp.name) / "no-tmp"),
+               "POKER_TEST_TMP_UID": tmp_owner or str(os.getuid())}
         r = subprocess.run(["bash", str(ROOT / "bin" / "seat"), "agent", vendor, "--", *argv],
                            env=env, capture_output=True, text=True, timeout=30)
         time.sleep(0.3)  # the helper loop runs in the background
@@ -92,6 +95,29 @@ class SeatUserTests(unittest.TestCase):
         self.assertEqual(len(archived), 1)
         self.assertEqual(oct((self.root / "archive").stat().st_mode & 0o777), "0o700")
         self.assertEqual((self.shared / ".claude/.credentials.json").read_text(), '{"token": "refreshed by the seat"}')
+
+    def test_restart_archives_what_the_seat_left_in_tmp(self):
+        # Claude Code keeps background commands' output in /tmp/claude-<uid> (a `poker wait`
+        # there holds that game's cards); /tmp outlives a game, and the next agent is the same
+        # user. REVISION: pokerbench-seat-v17-archive-tmp
+        tmp = Path(self.tmp.name) / "systmp"
+        task = tmp / "claude-3000/-workspace/s1/tasks/b1.output"
+        task.parent.mkdir(parents=True)
+        task.write_text("Your cards: Ah Kd. Board: 7c 8c 9c")
+        (tmp / "notes.txt").write_text("hand 23: astra shoved")
+        helper_log = tmp / "pokerbench-seat-3000-pty-1.log"
+        helper_log.write_text("[seat] status only")
+        others = tmp / "someone-elses"
+        others.mkdir()
+        self.launch("anthropic", "claude", seat_tmp=tmp, tmp_owner="0")  # owner root: not this seat
+        self.assertTrue(task.exists(), "files the seat's user doesn't own must stay")
+        self.launch("anthropic", "claude", seat_tmp=tmp)
+        self.assertFalse((tmp / "claude-3000").exists())
+        self.assertFalse((tmp / "notes.txt").exists())
+        self.assertTrue(helper_log.exists(), "the helper's own log stays (held open while it runs)")
+        archived = list((self.root / "archive" / "sonnet").glob(f"*/tmp{tmp}/claude-3000/-workspace/s1/tasks/b1.output"))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(len(list((self.root / "archive" / "sonnet").glob(f"*/tmp{tmp}/notes.txt"))), 1)
 
     def test_a_seat_keeps_its_own_login(self):
         # Two seats logged in separately must never end up sharing one login: copies of one
